@@ -120,7 +120,7 @@ class AIDeepAnalysisServiceTest {
 
         when(geminiClient.generateContent(anyString())).thenReturn("raw-ai-json");
 
-        when(businessInsightRepository.findByRuleCodeAndFromDateAndToDate(anyString(), any(), any()))
+        when(businessInsightRepository.findByRuleCodeAndScopeAndPeriod(anyString(), any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(businessInsightRepository.save(any(BusinessInsight.class))).thenAnswer(invocation -> {
             BusinessInsight insight = invocation.getArgument(0);

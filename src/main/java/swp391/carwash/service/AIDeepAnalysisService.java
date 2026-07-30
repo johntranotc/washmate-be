@@ -137,7 +137,7 @@ public class AIDeepAnalysisService {
                 continue;
             }
 
-            BusinessInsight businessInsight = saveBusinessInsight(candidate, verification, range);
+            BusinessInsight businessInsight = saveBusinessInsight(candidate, verification, range, garageId);
             InsightAIEnrichment enrichment;
             try {
                 enrichment = saveEnrichment(candidate, verification, businessInsight);
@@ -176,14 +176,18 @@ public class AIDeepAnalysisService {
     private BusinessInsight saveBusinessInsight(
             AIDetectedInsight candidate,
             AiInsightVerifier.VerificationResult verification,
-            DateRange range) {
+            DateRange range,
+            Integer garageId) {
         String ruleCode = ruleCodeFor(candidate.evidence().metric());
         ensureRuleConfig(ruleCode, candidate, verification.dbValue());
 
+        // Phải tra theo ĐÚNG garageId: metric được tính riêng cho garage này, nếu tra không
+        // theo phạm vi thì sẽ ghi đè insight của garage khác trong cùng kỳ.
         BusinessInsight insight = businessInsightRepository
-                .findByRuleCodeAndFromDateAndToDate(ruleCode, range.from(), range.to())
+                .findByRuleCodeAndScopeAndPeriod(ruleCode, garageId, range.from(), range.to())
                 .orElseGet(() -> BusinessInsight.builder()
                         .ruleCode(ruleCode)
+                        .garageId(garageId)
                         .fromDate(range.from())
                         .toDate(range.to())
                         .status(InsightStatus.NEW)

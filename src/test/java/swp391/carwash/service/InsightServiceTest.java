@@ -68,7 +68,7 @@ class InsightServiceTest {
         when(reportAggregationService.aggregate(from, to)).thenReturn(context);
         when(insightRuleConfigRepository.findAll()).thenReturn(List.of(config(RevenueInsightRule.REVENUE_GROWTH, true, 15)));
         when(insightRuleEngine.generate(any(InsightAnalysisContext.class), any())).thenReturn(List.of(candidate));
-        when(businessInsightRepository.findByRuleCodeAndFromDateAndToDate(RevenueInsightRule.REVENUE_GROWTH, from, to))
+        when(businessInsightRepository.findByRuleCodeAndScopeAndPeriod(RevenueInsightRule.REVENUE_GROWTH, null, from, to))
                 .thenReturn(Optional.empty());
         when(businessInsightRepository.save(any(BusinessInsight.class))).thenAnswer(invocation -> {
             BusinessInsight insight = invocation.getArgument(0);
@@ -98,7 +98,7 @@ class InsightServiceTest {
         when(reportAggregationService.aggregate(from, to)).thenReturn(businessContext(from, to));
         when(insightRuleConfigRepository.findAll()).thenReturn(List.of(config(RevenueInsightRule.REVENUE_GROWTH, true, 15)));
         when(insightRuleEngine.generate(any(InsightAnalysisContext.class), any())).thenReturn(List.of(revenueCandidate()));
-        when(businessInsightRepository.findByRuleCodeAndFromDateAndToDate(RevenueInsightRule.REVENUE_GROWTH, from, to))
+        when(businessInsightRepository.findByRuleCodeAndScopeAndPeriod(RevenueInsightRule.REVENUE_GROWTH, null, from, to))
                 .thenReturn(Optional.of(existing));
         when(businessInsightRepository.save(any(BusinessInsight.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
