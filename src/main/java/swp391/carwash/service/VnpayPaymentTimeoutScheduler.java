@@ -14,6 +14,7 @@ import swp391.carwash.enums.BookingStatus;
 import swp391.carwash.enums.PaymentMethod;
 import swp391.carwash.enums.PaymentStatus;
 import swp391.carwash.enums.PaymentTransactionStatus;
+import swp391.carwash.repository.BookingRepository;
 import swp391.carwash.repository.PaymentRepository;
 import swp391.carwash.repository.PaymentTransactionRepository;
 
@@ -23,6 +24,7 @@ import swp391.carwash.repository.PaymentTransactionRepository;
 public class VnpayPaymentTimeoutScheduler {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
+    private final BookingRepository bookingRepository;
 
     @Scheduled(fixedDelayString = "${washmate.payment.vnpay.timeout-scan-ms:60000}")
     @Transactional
@@ -32,6 +34,15 @@ public class VnpayPaymentTimeoutScheduler {
                 PaymentMethod.VNPAY, PaymentStatus.PENDING, now);
 
         for (Integer paymentId : paymentIds) {
+            // Đọc payment nhẹ để lấy bookingId, rồi khóa theo thứ tự NHẤT QUÁN: BOOKING trước, PAYMENT sau.
+            Payment paymentRef = paymentRepository.findById(paymentId).orElse(null);
+            if (paymentRef == null) {
+                continue;
+            }
+            Booking booking = bookingRepository.findDetailedByIdForUpdate(paymentRef.getBooking().getId()).orElse(null);
+            if (booking == null) {
+                continue;
+            }
             Payment payment = paymentRepository.findDetailedByIdForUpdate(paymentId).orElse(null);
             if (payment == null
                     || payment.getMethod() != PaymentMethod.VNPAY
@@ -43,7 +54,6 @@ public class VnpayPaymentTimeoutScheduler {
 
             payment.setStatus(PaymentStatus.CANCELLED);
             payment.setUpdatedAt(now);
-            Booking booking = payment.getBooking();
             if (booking.getStatus() == BookingStatus.PENDING) {
                 booking.setStatus(BookingStatus.CANCELLED);
                 booking.setCancelledAt(now);

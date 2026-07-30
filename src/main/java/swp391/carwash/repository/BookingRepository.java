@@ -125,6 +125,8 @@ public interface BookingRepository extends JpaRepository<Booking, Integer> {
 
   long countByStatus(BookingStatus status);
 
+  boolean existsByBookingCode(String bookingCode);
+
   @EntityGraph(attributePaths = { "user", "slot" })
   @Query("""
       SELECT b FROM Booking b

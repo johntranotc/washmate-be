@@ -18,6 +18,7 @@ import swp391.carwash.enums.BookingStatus;
 import swp391.carwash.enums.PaymentMethod;
 import swp391.carwash.enums.PaymentStatus;
 import swp391.carwash.enums.PaymentTransactionStatus;
+import swp391.carwash.repository.BookingRepository;
 import swp391.carwash.repository.PaymentRepository;
 import swp391.carwash.repository.PaymentTransactionRepository;
 
@@ -27,6 +28,8 @@ class VnpayPaymentTimeoutSchedulerTest {
     private PaymentRepository paymentRepository;
     @Mock
     private PaymentTransactionRepository paymentTransactionRepository;
+    @Mock
+    private BookingRepository bookingRepository;
 
     @Test
     void cancelsExpiredPendingPaymentBookingAndAttempts() {
@@ -50,11 +53,13 @@ class VnpayPaymentTimeoutSchedulerTest {
                 org.mockito.ArgumentMatchers.eq(PaymentStatus.PENDING),
                 org.mockito.ArgumentMatchers.any()))
                 .thenReturn(List.of(200));
+        when(paymentRepository.findById(200)).thenReturn(Optional.of(payment));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
         when(paymentTransactionRepository.findByPaymentIdAndStatus(200, PaymentTransactionStatus.PENDING))
                 .thenReturn(List.of(attempt));
 
-        new VnpayPaymentTimeoutScheduler(paymentRepository, paymentTransactionRepository)
+        new VnpayPaymentTimeoutScheduler(paymentRepository, paymentTransactionRepository, bookingRepository)
                 .cancelExpiredPayments();
 
         assertEquals(PaymentStatus.CANCELLED, payment.getStatus());

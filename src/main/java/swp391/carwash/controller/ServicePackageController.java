@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import swp391.carwash.dto.request.ServicePackageRequest.CreateServicePackageRequest;
 import swp391.carwash.dto.request.ServicePackageRequest.UpdateServicePackageRequest;
@@ -22,6 +23,7 @@ public class ServicePackageController {
     private final ServicePackageService servicePackageService;
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
     @Operation(summary = "Tạo gói dịch vụ mới")
     public ResponseEntity<ServicePackageResponse> createService(@RequestBody CreateServicePackageRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(servicePackageService.createService(request));
@@ -40,6 +42,7 @@ public class ServicePackageController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
     @Operation(summary = "Chỉnh sửa thông tin gói dịch vụ")
     public ResponseEntity<ServicePackageResponse> updateService(
             @PathVariable Long id,
@@ -48,6 +51,7 @@ public class ServicePackageController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
     @Operation(summary = "Xóa gói dịch vụ")
     public ResponseEntity<Void> deleteService(@PathVariable Long id) {
         servicePackageService.deleteService(id);

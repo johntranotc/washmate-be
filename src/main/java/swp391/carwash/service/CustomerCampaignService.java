@@ -79,7 +79,7 @@ public class CustomerCampaignService {
         BusinessInsight insight = getInsight(insightId);
 
         OffsetDateTime dedupCutoff = OffsetDateTime.now(TimeZones.VIETNAM).minusMinutes(DEDUP_COOLDOWN_MINUTES);
-        if (campaignSendLogRepository.existsByInsightIdAndSentAtAfter(insightId, dedupCutoff)) {
+        if (campaignSendLogRepository.existsByInsightIdAndSentAtAfterAndSentCountGreaterThan(insightId, dedupCutoff, 0)) {
             throw new ApiException(HttpStatus.CONFLICT,
                     "Insight này vừa được gửi chiến dịch gần đây. Vui lòng chờ trước khi gửi lại.");
         }
@@ -94,12 +94,24 @@ public class CustomerCampaignService {
 
         int sent = 0;
         int failed = 0;
+        String firstError = null;
         for (String email : emails) {
-            if (campaignEmailSender.send(email, request.subject(), bodyWithVoucher)) {
+            String error = campaignEmailSender.send(email, request.subject(), bodyWithVoucher);
+            if (error == null) {
                 sent++;
             } else {
                 failed++;
+                if (firstError == null) {
+                    firstError = error;
+                }
             }
+        }
+
+        // Fail toàn bộ (thường do cấu hình SMTP/from chưa đúng): rollback voucher + log,
+        // trả lỗi rõ ràng thay vì 200 với sent=0. Owner có thể sửa cấu hình và gửi lại ngay.
+        if (sent == 0) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Không gửi được email nào (%d lỗi). Nguyên nhân: %s".formatted(failed, firstError));
         }
 
         campaignSendLogRepository.save(CampaignSendLog.builder()

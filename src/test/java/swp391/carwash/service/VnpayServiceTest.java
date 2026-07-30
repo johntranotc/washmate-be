@@ -36,6 +36,7 @@ import swp391.carwash.enums.BookingStatus;
 import swp391.carwash.enums.PaymentMethod;
 import swp391.carwash.enums.PaymentStatus;
 import swp391.carwash.enums.PaymentTransactionStatus;
+import swp391.carwash.repository.BookingRepository;
 import swp391.carwash.repository.InvoiceRepository;
 import swp391.carwash.repository.PaymentRepository;
 import swp391.carwash.repository.PaymentTransactionRepository;
@@ -48,6 +49,8 @@ class VnpayServiceTest {
     private PaymentRepository paymentRepository;
     @Mock
     private PaymentTransactionRepository paymentTransactionRepository;
+    @Mock
+    private BookingRepository bookingRepository;
     @Mock
     private InvoiceRepository invoiceRepository;
     @Mock
@@ -83,7 +86,8 @@ class VnpayServiceTest {
                 paymentTransactionRepository,
                 settlementService,
                 new ObjectMapper(),
-                transactionManager);
+                transactionManager,
+                bookingRepository);
 
         booking = swp391.carwash.testutil.TestData.pendingBooking("BKG100");
         payment = swp391.carwash.testutil.TestData.pendingPayment(booking, PaymentMethod.VNPAY);
@@ -97,6 +101,10 @@ class VnpayServiceTest {
                 .createdAt(OffsetDateTime.now())
                 .expiresAt(OffsetDateTime.now().plusMinutes(15))
                 .build();
+
+        org.mockito.Mockito.lenient()
+                .when(bookingRepository.findDetailedByIdForUpdate(100))
+                .thenReturn(Optional.of(booking));
 
         org.mockito.Mockito.lenient()
                 .when(transactionManager.getTransaction(any(TransactionDefinition.class)))

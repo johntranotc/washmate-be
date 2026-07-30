@@ -170,7 +170,7 @@ class BookingServiceTest {
         Booking booking = detailedBooking(BookingStatus.PENDING);
 
         when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class, () -> bookingService.checkIn(100, principal));
 

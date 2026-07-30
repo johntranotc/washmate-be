@@ -20,6 +20,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
 import swp391.carwash.common.exception.ApiException;
 import swp391.carwash.dto.AuthResponse;
 import swp391.carwash.dto.GoogleLoginRequest;
@@ -54,12 +57,20 @@ class AuthServiceTest {
     private TokenService tokenService;
     @Mock
     private GoogleAuthService googleAuthService;
+    @Mock
+    private PlatformTransactionManager transactionManager;
+    @Mock
+    private TransactionStatus transactionStatus;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(appUserRepository, roleRepository, userRoleRepository, passwordEncoder, otpService, tokenService, googleAuthService);
+        authService = new AuthService(appUserRepository, roleRepository, userRoleRepository,
+                passwordEncoder, otpService, tokenService, googleAuthService, transactionManager);
+        org.mockito.Mockito.lenient()
+                .when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenReturn(transactionStatus);
         ReflectionTestUtils.setField(authService, "loginMaxFailedAttempts", 3);
         ReflectionTestUtils.setField(authService, "loginLockMinutes", 15L);
     }
@@ -195,6 +206,7 @@ class AuthServiceTest {
                 .failedLoginCount(2)
                 .build();
         when(appUserRepository.findByEmailIgnoreCase("user@example.com")).thenReturn(Optional.of(user));
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong", "hash")).thenReturn(false);
 
         ApiException exception = assertThrows(ApiException.class,

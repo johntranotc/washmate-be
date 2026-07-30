@@ -59,3 +59,13 @@ Thumbs.db
 *_Postman_Collection.json
 *.postman_collection.json
 postman/
+
+### Docs / diagrams / slides (khong thuoc code BE) ###
+*.pptx
+*.drawio
+*.drawio.dtmp
+*.mermaid
+flows/
+# Office temp files
+~$*
+.$*

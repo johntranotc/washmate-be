@@ -9,7 +9,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import swp391.carwash.dto.*;
 import swp391.carwash.common.exception.ApiException;
@@ -37,6 +40,7 @@ public class AuthService {
     private final OtpService otpService;
     private final TokenService tokenService;
     private final GoogleAuthService googleAuthService;
+    private final PlatformTransactionManager transactionManager;
 
     @Value("${washmate.security.login.max-failed-attempts:5}")
     private int loginMaxFailedAttempts;
@@ -111,8 +115,9 @@ public class AuthService {
         }
 
         if (!StringUtils.hasText(user.getPasswordHash()) || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            recordFailedLogin(user, now);
-            log.warn("Failed login attempt: userId={}, failedCount={}", user.getId(), user.getFailedLoginCount());
+            // Ghi counter trong transaction RIÊNG (REQUIRES_NEW) để KHÔNG bị rollback khi throw bên dưới,
+            // nếu không cơ chế khóa tài khoản sau N lần sai sẽ vô tác dụng.
+            recordFailedLogin(user.getId(), now);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Tài khoản hoặc mật khẩu không chính xác");
         }
 
@@ -198,16 +203,36 @@ public class AuthService {
         tokenService.revokeRefreshToken(request.refreshToken());
     }
 
-    @Transactional
+    // KHÔNG @Transactional: cần nuốt lỗi từ otpService.requestOtp (cooldown, không có email...)
+    // mà không làm hỏng transaction ngoài; requestOtp tự quản transaction riêng.
     public OtpResponse forgotPassword(OtpRequest request) {
-        AppUser user = findUserByIdentifier(request.identifier())
-                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Tài khoản không tồn tại"));
-        ensureActive(user);
-        
-        String email = otpService.resolveEmailIdentifier(request.identifier());
-        otpService.requestOtp(email);
-        log.info("Forgot password OTP requested: userId={}", user.getId());
-        return new OtpResponse(email, null, "Đã gửi mã xác thực (OTP) qua email");
+        // Chống dò tài khoản (user enumeration): luôn trả cùng một thông báo, bất kể
+        // tài khoản có tồn tại/đang hoạt động hay không, và không lộ nguyên nhân lỗi.
+        String genericMessage = "Nếu tài khoản tồn tại, mã xác thực (OTP) đã được gửi tới email.";
+        try {
+            AppUser user = findUserByIdentifier(request.identifier()).orElse(null);
+            if (user != null && user.getStatus() == UserStatus.ACTIVE) {
+                String email = otpService.resolveEmailIdentifier(request.identifier());
+                otpService.requestOtp(email);
+                log.info("Forgot password OTP requested: userId={}", user.getId());
+            } else {
+                log.info("Forgot password requested for non-existent/inactive account");
+            }
+        } catch (Exception ex) {
+            // Không để lộ nguyên nhân (email không hợp lệ, cooldown, không có email...) ra ngoài.
+            log.warn("Forgot password processing issue: {}", ex.getMessage());
+        }
+        return new OtpResponse(responseEmailFor(request.identifier()), null, genericMessage);
+    }
+
+    // Email hiển thị lại trong response chỉ suy ra từ CHÍNH input người dùng nhập (không tra DB),
+    // nên không tiết lộ tài khoản có tồn tại hay không.
+    private String responseEmailFor(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String trimmed = identifier.trim();
+        return trimmed.contains("@") ? trimmed.toLowerCase(Locale.ROOT) : null;
     }
 
     @Transactional
@@ -279,12 +304,27 @@ public class AuthService {
         return appUserRepository.findByPhone(identifier);
     }
 
-    private void recordFailedLogin(AppUser user, OffsetDateTime now) {
-        int failedCount = user.getFailedLoginCount() == null ? 1 : user.getFailedLoginCount() + 1;
-        user.setFailedLoginCount(failedCount);
-        if (failedCount >= loginMaxFailedAttempts) {
-            user.setLockedUntil(now.plusMinutes(loginLockMinutes));
-            log.warn("Account locked after {} failed attempts: userId={}", failedCount, user.getId());
+    private void recordFailedLogin(Integer userId, OffsetDateTime now) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        Integer failedCount = template.execute(status -> {
+            AppUser fresh = appUserRepository.findById(userId).orElse(null);
+            if (fresh == null) {
+                return null;
+            }
+            int count = fresh.getFailedLoginCount() == null ? 1 : fresh.getFailedLoginCount() + 1;
+            fresh.setFailedLoginCount(count);
+            if (count >= loginMaxFailedAttempts) {
+                fresh.setLockedUntil(now.plusMinutes(loginLockMinutes));
+            }
+            appUserRepository.save(fresh);
+            return count;
+        });
+        if (failedCount != null) {
+            log.warn("Failed login attempt: userId={}, failedCount={}", userId, failedCount);
+            if (failedCount >= loginMaxFailedAttempts) {
+                log.warn("Account locked after {} failed attempts: userId={}", failedCount, userId);
+            }
         }
     }
 

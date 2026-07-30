@@ -57,6 +57,7 @@ public class VnpayService {
     private final PaymentSettlementService paymentSettlementService;
     private final ObjectMapper objectMapper;
     private final PlatformTransactionManager transactionManager;
+    private final swp391.carwash.repository.BookingRepository bookingRepository;
 
     @PostConstruct
     void validateConfiguration() {
@@ -137,6 +138,9 @@ public class VnpayService {
                     .execute(status -> processVerifiedIpn(callbackParameters));
             return response == null ? VnpayIpnResponse.of("99", "Unknown error") : response;
         } catch (RuntimeException ex) {
+            // Không nuốt lỗi âm thầm: log stacktrace để còn debug được khi IPN lỗi ở production.
+            log.error("VNPAY IPN processing failed for txnRef={}",
+                    callbackParameters.get("vnp_TxnRef"), ex);
             return VnpayIpnResponse.of("99", "Unknown error");
         }
     }
@@ -190,6 +194,13 @@ public class VnpayService {
             return VnpayIpnResponse.of("01", "Order not found");
         }
 
+        // Khóa theo thứ tự NHẤT QUÁN với BookingService/PaymentService: BOOKING trước, PAYMENT sau
+        // -> IPN (do server VNPAY gọi) không đua chéo với thao tác hủy/xác nhận đồng thời của khách/staff.
+        Booking booking = bookingRepository.findDetailedByIdForUpdate(attempt.getPayment().getBooking().getId())
+                .orElse(null);
+        if (booking == null) {
+            return VnpayIpnResponse.of("01", "Order not found");
+        }
         Payment payment = paymentRepository.findDetailedByIdForUpdate(attempt.getPayment().getId())
                 .orElse(null);
         if (payment == null) {
@@ -200,6 +211,18 @@ public class VnpayService {
         }
         if (attempt.getStatus() != PaymentTransactionStatus.PENDING
                 || payment.getStatus() != PaymentStatus.PENDING) {
+            // Trường hợp nguy hiểm cần đối soát: VNPAY báo GIAO DỊCH THÀNH CÔNG (đã trừ tiền khách)
+            // nhưng phía mình payment không còn PENDING và cũng CHƯA phải PAID
+            // (vd đơn bị hủy / hết hạn trước khi IPN tới) -> tiền treo, cần hoàn tiền/đối soát thủ công.
+            // Đã PAID thì đây chỉ là IPN trùng lặp bình thường -> bỏ qua.
+            if (isSuccessfulCallback(callbackParameters)
+                    && payment.getStatus() != PaymentStatus.PAID) {
+                log.error("VNPAY RECONCILIATION NEEDED: success IPN but payment is not settleable. "
+                                + "paymentId={}, paymentStatus={}, bookingId={}, providerTxnId={}, amount={}",
+                        payment.getId(), payment.getStatus(), booking.getId(),
+                        callbackParameters.get("vnp_TransactionNo"),
+                        callbackParameters.get("vnp_Amount"));
+            }
             return VnpayIpnResponse.of("02", "Order already confirmed");
         }
 
@@ -218,7 +241,7 @@ public class VnpayService {
 
         if (isSuccessfulCallback(callbackParameters)) {
             Invoice invoice = paymentSettlementService.settle(
-                    payment, payment.getBooking(), attempt, PaymentMethod.VNPAY, OffsetDateTime.now());
+                    payment, booking, attempt, PaymentMethod.VNPAY, OffsetDateTime.now());
             if (invoice == null) {
                 throw new IllegalStateException("Invoice was not created");
             }

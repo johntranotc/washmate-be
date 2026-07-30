@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import swp391.carwash.dto.request.Garages.CreateGarageRequest;
 import swp391.carwash.dto.request.Garages.UpdateGarageRequest;
@@ -29,6 +30,7 @@ public class GarageController {
     // 1. API Tạo mới một Garage (Hứng CreateGarageRequest, trả GarageResponse)
     // POST http://localhost:8080/api/v1/garages
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Tạo mới một Garage", description = "Thêm mới một chi nhánh garage vào hệ thống kèm dữ liệu validation")
     public ResponseEntity<GarageResponse> createGarage(@Valid @RequestBody CreateGarageRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(garageService.createGarage(request));
@@ -55,6 +57,7 @@ public class GarageController {
     // 4. API Cập nhật thông tin Garage
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Cập nhật thông tin Garage")
     public ResponseEntity<GarageResponse> updateGarage(
             @PathVariable Integer id,
@@ -69,6 +72,7 @@ public class GarageController {
     // 5. API Xóa một Garage
     // DELETE http://localhost:8080/api/v1/garages/{id}
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Xóa một Garage", description = "Xóa thông tin chi nhánh garage ra khỏi hệ thống theo ID")
     public ResponseEntity<Void> deleteGarage(@PathVariable Integer id) {
         try {

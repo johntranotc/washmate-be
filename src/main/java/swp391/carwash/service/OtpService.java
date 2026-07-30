@@ -9,7 +9,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import swp391.carwash.common.exception.ApiException;
 import swp391.carwash.entity.OtpCode;
@@ -28,6 +31,7 @@ public class OtpService {
     private final AppUserRepository appUserRepository;
     private final PasswordEncoder passwordEncoder;
     private final OtpSender otpSender;
+    private final PlatformTransactionManager transactionManager;
 
     @Value("${washmate.security.otp.mock-code:}")
     private String mockOtp;
@@ -88,10 +92,9 @@ public class OtpService {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Mã OTP đã hết hạn");
         }
         if (!passwordEncoder.matches(submittedOtp, expected.getCode())) {
-            expected.setFailedAttempts(expected.getFailedAttempts() == null ? 1 : expected.getFailedAttempts() + 1);
-            if (expected.getFailedAttempts() >= otpMaxAttempts) {
-                otpCodeRepository.delete(expected);
-            }
+            // Ghi số lần sai trong transaction RIÊNG (REQUIRES_NEW) để KHÔNG bị rollback khi throw,
+            // nếu không giới hạn số lần thử OTP sẽ vô tác dụng (brute-force 6 số).
+            recordOtpFailure(expected.getId());
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Mã OTP không chính xác");
         }
         otpCodeRepository.delete(expected);
@@ -117,6 +120,24 @@ public class OtpService {
                     .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Email is required"));
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "Email is invalid");
+    }
+
+    private void recordOtpFailure(Integer otpId) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> {
+            OtpCode fresh = otpCodeRepository.findById(otpId).orElse(null);
+            if (fresh == null) {
+                return;
+            }
+            int attempts = fresh.getFailedAttempts() == null ? 1 : fresh.getFailedAttempts() + 1;
+            fresh.setFailedAttempts(attempts);
+            if (attempts >= otpMaxAttempts) {
+                otpCodeRepository.delete(fresh); // hết lượt thử -> vô hiệu mã
+            } else {
+                otpCodeRepository.save(fresh);
+            }
+        });
     }
 
     private String generateSecureOtp() {

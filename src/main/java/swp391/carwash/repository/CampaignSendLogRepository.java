@@ -6,6 +6,10 @@ import swp391.carwash.entity.CampaignSendLog;
 
 public interface CampaignSendLogRepository extends JpaRepository<CampaignSendLog, Integer> {
 
-    /** Chống gửi trùng: đã có lần gửi cho insight này sau mốc cutoff chưa. */
-    boolean existsByInsightIdAndSentAtAfter(Integer insightId, OffsetDateTime cutoff);
+    /**
+     * Chống gửi trùng: đã có lần gửi THÀNH CÔNG (sentCount > 0) cho insight này
+     * sau mốc cutoff chưa. Lần gửi fail toàn bộ không tính, để owner được retry ngay.
+     */
+    boolean existsByInsightIdAndSentAtAfterAndSentCountGreaterThan(
+            Integer insightId, OffsetDateTime cutoff, int sentCount);
 }

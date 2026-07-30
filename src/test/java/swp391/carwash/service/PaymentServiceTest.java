@@ -70,13 +70,14 @@ class PaymentServiceTest {
         payment = swp391.carwash.testutil.TestData.pendingPayment(booking, PaymentMethod.CASH);
 
         lenient().when(principal.getRoleNames()).thenReturn(List.of("OWNER"));
+        lenient().when(paymentRepository.findById(200)).thenReturn(Optional.of(payment));
     }
 
     @Test
     void confirmPaymentRejectsAmountMismatch() {
         payment.setAmount(new BigDecimal("49000.00"));
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.confirmPayment(200, new PaymentConfirmRequest(PaymentMethod.CASH, "MANUAL", "TXN-1"), principal));
@@ -89,7 +90,7 @@ class PaymentServiceTest {
     @Test
     void confirmPaymentRejectsDuplicateProviderTransaction() {
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentTransactionRepository.existsByProviderAndProviderTxnId("MANUAL", "TXN-1")).thenReturn(true);
 
         ApiException exception = assertThrows(ApiException.class,
@@ -118,7 +119,7 @@ class PaymentServiceTest {
                 .build();
 
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentTransactionRepository.existsByProviderAndProviderTxnId("MANUAL", "REF-1")).thenReturn(false);
         when(invoiceRepository.findByBookingId(100)).thenReturn(Optional.of(invoice));
 
@@ -135,7 +136,7 @@ class PaymentServiceTest {
     void manualConfirmRejectsVnpayPayment() {
         payment.setMethod(PaymentMethod.VNPAY);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.confirmPayment(
@@ -165,7 +166,7 @@ class PaymentServiceTest {
     void confirmPaymentAllowsConfirmedBookingAndPreservesStatus() {
         booking.setStatus(BookingStatus.CONFIRMED);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentTransactionRepository.save(any(PaymentTransaction.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
         when(invoiceRepository.findByBookingId(100)).thenReturn(Optional.empty());
@@ -182,7 +183,7 @@ class PaymentServiceTest {
     void confirmPaymentRejectsCompletedBooking() {
         booking.setStatus(BookingStatus.COMPLETED);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.confirmPayment(200, new PaymentConfirmRequest(PaymentMethod.CASH, "MANUAL", "TXN-1"), principal));
@@ -196,7 +197,7 @@ class PaymentServiceTest {
     void confirmPaymentRejectsWhenPaymentNotPending() {
         payment.setStatus(PaymentStatus.PAID);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.confirmPayment(200, new PaymentConfirmRequest(PaymentMethod.CASH, "MANUAL", "TXN-1"), principal));
@@ -210,7 +211,7 @@ class PaymentServiceTest {
     void refundPaymentRejectsWhenNotPaid() {
         payment.setStatus(PaymentStatus.PENDING);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.refundPayment(200, new PaymentActionRequest("MANUAL", "REF-1", "Customer requested refund"), principal));
@@ -223,7 +224,7 @@ class PaymentServiceTest {
     void refundPaymentRejectsVnpay() {
         payment.setMethod(PaymentMethod.VNPAY);
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class,
                 () -> paymentService.refundPayment(200, new PaymentActionRequest("VNPAY", "REF-1", "Refund request"), principal));
@@ -235,7 +236,7 @@ class PaymentServiceTest {
     @Test
     void confirmPaymentRollsBackOnError() {
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentTransactionRepository.save(any(PaymentTransaction.class))).thenThrow(new RuntimeException("Database error"));
 
         RuntimeException exception = assertThrows(RuntimeException.class,

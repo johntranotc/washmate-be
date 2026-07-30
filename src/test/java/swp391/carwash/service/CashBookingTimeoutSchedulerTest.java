@@ -61,6 +61,7 @@ class CashBookingTimeoutSchedulerTest {
 
         when(bookingRepository.findPendingBookingsUpToDate(any())).thenReturn(List.of(booking));
         when(paymentRepository.findByBookingId(100)).thenReturn(Optional.of(payment));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
 
         scheduler().cancelExpiredCashBookings();

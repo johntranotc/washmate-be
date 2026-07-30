@@ -74,8 +74,8 @@ public class PaymentService {
 
     @Transactional
     public BookingResponse confirmPayment(Integer paymentId, PaymentConfirmRequest request, AppUserDetails principal) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         return confirmPendingPayment(payment, booking, request, principal.getId());
@@ -124,8 +124,8 @@ public class PaymentService {
 
     @Transactional
     public BookingResponse refundPayment(Integer paymentId, PaymentActionRequest request, AppUserDetails principal) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         if (payment.getMethod() == PaymentMethod.VNPAY) {
@@ -166,8 +166,8 @@ public class PaymentService {
             PaymentStatus paymentStatus,
             PaymentTransactionStatus transactionStatus,
             String invalidStatusMessage) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         if (payment.getMethod() == PaymentMethod.VNPAY) {
@@ -206,8 +206,16 @@ public class PaymentService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Payment not found"));
     }
 
-    private Booking findDetailedBooking(Integer bookingId) {
-        return bookingRepository.findDetailedById(bookingId)
+    /**
+     * Khóa aggregate booking↔payment theo thứ tự NHẤT QUÁN: BOOKING trước, PAYMENT sau.
+     * Mọi flow sửa trạng thái booking/payment (kể cả bên BookingService) đều phải khóa
+     * row booking trước (cùng "ổ khóa") để tránh race chéo giữa hai service. Đọc payment
+     * nhẹ chỉ để lấy bookingId (quan hệ FK cố định, an toàn khi chưa khóa).
+     */
+    private Booking lockBookingOfPayment(Integer paymentId) {
+        Payment ref = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Payment not found"));
+        return bookingRepository.findDetailedByIdForUpdate(ref.getBooking().getId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Booking not found"));
     }
 

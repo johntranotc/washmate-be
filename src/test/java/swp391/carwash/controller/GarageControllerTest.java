@@ -14,9 +14,6 @@ import org.springframework.mail.javamail.JavaMailSender;
 import swp391.carwash.dto.request.Garages.CreateGarageRequest;
 import swp391.carwash.dto.response.Garages.GarageResponse;
 import swp391.carwash.service.GarageService;
-import swp391.carwash.security.AppUserDetails;
-import swp391.carwash.entity.AppUser;
-import swp391.carwash.enums.UserStatus;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -50,17 +47,6 @@ public class GarageControllerTest {
     @MockitoBean
     private GarageService garageService;
 
-    private AppUserDetails createMockUser() {
-        AppUser appUser = new AppUser();
-        appUser.setId(1);
-        appUser.setEmail("user@example.com");
-        appUser.setFullName("Test User");
-        appUser.setPhone("0123456789");
-        appUser.setStatus(UserStatus.ACTIVE);
-        appUser.setUserRoles(Collections.emptySet());
-        return new AppUserDetails(appUser);
-    }
-
     @Test
     void testCreateGarageSuccess() throws Exception {
         CreateGarageRequest request = new CreateGarageRequest("Garage A", "123 Street", "0123456789");
@@ -70,7 +56,7 @@ public class GarageControllerTest {
         when(garageService.createGarage(any(CreateGarageRequest.class))).thenReturn(response);
 
         mockMvc.perform(post("/api/v1/garages")
-                .with(user(createMockUser()))
+                .with(user("admin@example.com").roles("ADMIN"))
                 .with(csrf())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
@@ -85,7 +71,7 @@ public class GarageControllerTest {
         // Missing name and invalid phone
 
         mockMvc.perform(post("/api/v1/garages")
-                .with(user(createMockUser()))
+                .with(user("admin@example.com").roles("ADMIN"))
                 .with(csrf())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
@@ -105,7 +91,7 @@ public class GarageControllerTest {
         doNothing().when(garageService).deleteGarage(eq(1));
 
         mockMvc.perform(delete("/api/v1/garages/1")
-                .with(user(createMockUser()))
+                .with(user("admin@example.com").roles("ADMIN"))
                 .with(csrf()))
                 .andExpect(status().isNoContent());
     }
@@ -115,7 +101,7 @@ public class GarageControllerTest {
         doThrow(new RuntimeException("Not Found")).when(garageService).deleteGarage(eq(999));
 
         mockMvc.perform(delete("/api/v1/garages/999")
-                .with(user(createMockUser()))
+                .with(user("admin@example.com").roles("ADMIN"))
                 .with(csrf()))
                 .andExpect(status().isNotFound());
     }

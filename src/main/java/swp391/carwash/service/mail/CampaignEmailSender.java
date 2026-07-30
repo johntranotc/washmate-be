@@ -27,14 +27,15 @@ public class CampaignEmailSender {
     @Value("${washmate.campaign.mail.mock:false}")
     private boolean mockMode;
 
-    public boolean send(String toEmail, String subject, String bodyText) {
+    /** @return {@code null} nếu gửi thành công, ngược lại là thông điệp lỗi (để caller surface lên API). */
+    public String send(String toEmail, String subject, String bodyText) {
         if (toEmail == null || toEmail.isBlank()) {
-            return false;
+            return "Địa chỉ email trống";
         }
         if (mockMode) {
             log.info("[MOCK] Campaign email → {} | subject: {} | body: {}",
                     toEmail, subject, bodyText == null ? "" : bodyText.replace("\n", " ").trim());
-            return true;
+            return null;
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();
@@ -45,10 +46,10 @@ public class CampaignEmailSender {
             helper.setText(buildHtml(bodyText), true);
             mailSender.send(message);
             log.info("Campaign email sent to {}", toEmail);
-            return true;
+            return null;
         } catch (MessagingException | RuntimeException e) {
             log.error("Failed to send campaign email to {}: {}", toEmail, e.getMessage());
-            return false;
+            return e.getMessage();
         }
     }
 
