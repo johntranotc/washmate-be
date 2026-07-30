@@ -16,6 +16,7 @@ import swp391.carwash.entity.AppUser;
 import swp391.carwash.entity.Vehicle;
 import swp391.carwash.repository.AppUserRepository;
 import swp391.carwash.repository.VehicleRepository;
+import swp391.carwash.security.AppUserDetails;
 
 import java.util.List;
 
@@ -69,8 +70,9 @@ public class VehicleServiceImpl implements VehicleService{
     }
 
     @Override
-    public VehicleResponse update(Integer vehicleId, UpdateVehicleRequest request) {
+    public VehicleResponse update(Integer vehicleId, UpdateVehicleRequest request, AppUserDetails principal) {
         Vehicle vehicle = findVehicleById(vehicleId);
+        requireOwnershipOrStaff(vehicle, principal);
 
         if (!vehicle.getLicensePlate().equals(request.getLicensePlate())) {
             if (vehicleRepository.existsByLicensePlateAndDeletedAtIsNull(request.getLicensePlate())) {
@@ -99,9 +101,10 @@ public class VehicleServiceImpl implements VehicleService{
     }
 
     @Override
-    public void delete(Integer vehicleId) {
+    public void delete(Integer vehicleId, AppUserDetails principal) {
         // 1. Tìm xe trong DB
         Vehicle vehicle = findVehicleById(vehicleId);
+        requireOwnershipOrStaff(vehicle, principal);
 
         // 2. Chỉ cập nhật thông tin (Xóa mềm)
         vehicle.setStatus(swp391.carwash.enums.RecordStatus.DELETED);
@@ -157,7 +160,33 @@ public class VehicleServiceImpl implements VehicleService{
     private Vehicle findVehicleById(Integer vehicleId) {
         return vehicleRepository
                 .findByIdAndDeletedAtIsNull(vehicleId).orElseThrow(() ->
-                        new RuntimeException("không tìm thấy phương tiện này"));
+                        new ApiException(HttpStatus.NOT_FOUND, "không tìm thấy phương tiện này"));
+    }
+
+    /**
+     * Chặn IDOR: chỉ chủ xe, hoặc ADMIN/STAFF, mới được sửa/xoá.
+     *
+     * <p>Trước đây update()/delete() không kiểm gì cả — bất kỳ user đăng nhập nào cũng sửa
+     * được biển số hoặc xoá mềm xe của người khác chỉ bằng cách đoán vehicleId. Và vì
+     * BookingService yêu cầu vehicle ACTIVE, việc xoá xe người khác còn phá luôn khả năng
+     * đặt/sửa lịch của họ.
+     */
+    private void requireOwnershipOrStaff(Vehicle vehicle, AppUserDetails principal) {
+        if (principal == null) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "Yêu cầu đăng nhập");
+        }
+
+        List<String> roles = principal.getRoleNames();
+        if (roles.contains("ADMIN") || roles.contains("OWNER")
+                || roles.contains("STAFF") || roles.contains("MANAGER")) {
+            return;
+        }
+
+        Integer ownerId = vehicle.getUser() == null ? null : vehicle.getUser().getId();
+        if (ownerId == null || !ownerId.equals(principal.getId())) {
+            // Dùng 404 để không tiết lộ vehicleId này có tồn tại và thuộc về ai.
+            throw new ApiException(HttpStatus.NOT_FOUND, "không tìm thấy phương tiện này");
+        }
     }
 
     private VehicleResponse mapToResponse(Vehicle vehicle) {

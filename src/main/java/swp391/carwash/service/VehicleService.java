@@ -6,6 +6,7 @@ import swp391.carwash.dto.request.vehicles.CreateMyVehicleRequest;
 import swp391.carwash.dto.request.vehicles.CreateVehicleRequest;
 import swp391.carwash.dto.request.vehicles.UpdateVehicleRequest;
 import swp391.carwash.dto.response.vehicles.VehicleResponse;
+import swp391.carwash.security.AppUserDetails;
 
 import java.util.List;
 
@@ -19,9 +20,15 @@ public interface VehicleService {
 
     List<VehicleResponse> getByUserId(Integer userId);
 
-    VehicleResponse update(Integer vehicleId,UpdateVehicleRequest request);
+    /**
+     * Sửa xe. {@code principal} là BẮT BUỘC để kiểm tra quyền sở hữu: trước đây thiếu tham số
+     * này nên bất kỳ user đăng nhập nào cũng sửa được xe của người khác chỉ bằng cách đoán
+     * vehicleId.
+     */
+    VehicleResponse update(Integer vehicleId, UpdateVehicleRequest request, AppUserDetails principal);
 
-    void delete(Integer vehicleId);
+    /** Xoá mềm xe. Xem ghi chú về {@code principal} ở {@link #update}. */
+    void delete(Integer vehicleId, AppUserDetails principal);
 
     List<VehicleResponse> getByEmail(String email);
 

@@ -2,6 +2,7 @@ package swp391.carwash.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +26,7 @@ public class ServicePackageController {
     @PostMapping
     @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
     @Operation(summary = "Tạo gói dịch vụ mới")
-    public ResponseEntity<ServicePackageResponse> createService(@RequestBody CreateServicePackageRequest request) {
+    public ResponseEntity<ServicePackageResponse> createService(@Valid @RequestBody CreateServicePackageRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(servicePackageService.createService(request));
     }
 
@@ -46,7 +47,7 @@ public class ServicePackageController {
     @Operation(summary = "Chỉnh sửa thông tin gói dịch vụ")
     public ResponseEntity<ServicePackageResponse> updateService(
             @PathVariable Long id,
-            @RequestBody UpdateServicePackageRequest request) {
+            @Valid @RequestBody UpdateServicePackageRequest request) {
         return ResponseEntity.ok(servicePackageService.updateService(id, request));
     }
 
