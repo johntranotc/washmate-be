@@ -43,6 +43,11 @@ public interface BookingRepository extends JpaRepository<Booking, Integer> {
   @EntityGraph(attributePaths = { "user", "garage", "slot", "service", "vehicle", "assignedStaff" })
   List<Booking> findByUserIdOrderByCreatedAtDesc(Integer userId);
 
+  Optional<Booking> findFirstByUserIdAndGarageIdAndStatusOrderByCompletedTimeDesc(
+      Integer userId,
+      Integer garageId,
+      BookingStatus status);
+
   @Query("""
       select count(b)
       from Booking b

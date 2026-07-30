@@ -18,6 +18,11 @@ public interface LoyaltyAccountRepository extends JpaRepository<LoyaltyAccount, 
     @EntityGraph(attributePaths = {"garage", "tier"})
     List<LoyaltyAccount> findByUserIdOrderByGarageNameAsc(Integer userId);
 
+    List<LoyaltyAccount> findByStatusAndAvailablePointsGreaterThan(
+            RecordStatus status,
+            Integer availablePoints
+    );
+
     Optional<LoyaltyAccount> findByUserIdAndGarageId(Integer userId, Integer garageId);
 
     Boolean existsByTierId(Integer tierId);

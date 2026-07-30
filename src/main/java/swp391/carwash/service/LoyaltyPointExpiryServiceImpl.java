@@ -1,73 +1,104 @@
 package swp391.carwash.service;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import swp391.carwash.entity.LoyaltyAccount;
-import swp391.carwash.entity.LoyaltyTransaction;
-import swp391.carwash.enums.TransactionType;
-import swp391.carwash.repository.LoyaltyAccountRepository;
-import swp391.carwash.repository.LoyaltyTransactionRepository;
-
 import java.time.OffsetDateTime;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import swp391.carwash.entity.Booking;
+import swp391.carwash.entity.LoyaltyAccount;
+import swp391.carwash.entity.LoyaltyPolicy;
+import swp391.carwash.entity.LoyaltyTransaction;
+import swp391.carwash.enums.BookingStatus;
+import swp391.carwash.enums.RecordStatus;
+import swp391.carwash.enums.TransactionType;
+import swp391.carwash.repository.BookingRepository;
+import swp391.carwash.repository.LoyaltyAccountRepository;
+import swp391.carwash.repository.LoyaltyPolicyRepository;
+import swp391.carwash.repository.LoyaltyTransactionRepository;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
-@Transactional
-public class LoyaltyPointExpiryServiceImpl
-        implements LoyaltyPointExpiryService {
+public class LoyaltyPointExpiryServiceImpl implements LoyaltyPointExpiryService {
 
-    private final LoyaltyTransactionRepository loyaltyTransactionRepository;
-    private final LoyaltyAccountRepository loyaltyAccountRepository;
+    private final LoyaltyAccountRepository accountRepository;
+    private final LoyaltyPolicyRepository policyRepository;
+    private final BookingRepository bookingRepository;
+    private final LoyaltyTransactionRepository transactionRepository;
 
     @Override
+    @Transactional
     public void expirePoints() {
+        List<LoyaltyAccount> accounts =
+                accountRepository.findByStatusAndAvailablePointsGreaterThan(
+                        RecordStatus.ACTIVE,
+                        0
+                );
 
-        List<LoyaltyTransaction> transactions =
-                loyaltyTransactionRepository
-                        .findByTransactionTypeAndExpiredFalseAndExpiresAtLessThanEqual(
-                                TransactionType.EARN,
-                                OffsetDateTime.now());
+        OffsetDateTime now = OffsetDateTime.now();
 
-        for (LoyaltyTransaction transaction : transactions) {
-
-            expire(transaction);
-
+        for (LoyaltyAccount account : accounts) {
+            expireAccount(account, now);
         }
-
     }
 
-    private void expire(LoyaltyTransaction earnTransaction) {
+    private void expireAccount(LoyaltyAccount account, OffsetDateTime now) {
+        Integer garageId = account.getGarage().getId();
+        Integer userId = account.getUser().getId();
 
-        LoyaltyAccount account = earnTransaction.getAccount();
+        LoyaltyPolicy policy = policyRepository
+                .findByGarageIdAndStatus(garageId, RecordStatus.ACTIVE)
+                .orElse(null);
 
-        int actualExpiredPoint = Math.min(
-                account.getAvailablePoints(),
-                earnTransaction.getPoints());
-
-        if (actualExpiredPoint <= 0) {
-            earnTransaction.setExpired(true);
-            loyaltyTransactionRepository.save(earnTransaction);
+        if (policy == null) {
             return;
         }
 
-        account.setAvailablePoints(
-                account.getAvailablePoints() - actualExpiredPoint);
+        Booking lastCompletedBooking = bookingRepository
+                .findFirstByUserIdAndGarageIdAndStatusOrderByCompletedTimeDesc(
+                        userId,
+                        garageId,
+                        BookingStatus.COMPLETED
+                )
+                .orElse(null);
 
-        loyaltyAccountRepository.save(account);
+        if (lastCompletedBooking == null
+                || lastCompletedBooking.getCompletedTime() == null) {
+            return;
+        }
 
-        earnTransaction.setExpired(true);
-        loyaltyTransactionRepository.save(earnTransaction);
+        OffsetDateTime expiryDate = lastCompletedBooking
+                .getCompletedTime()
+                .plusMonths(policy.getPointExpiryMonths());
 
-        LoyaltyTransaction expireTransaction = LoyaltyTransaction.builder()
+        if (expiryDate.isAfter(now)) {
+            return;
+        }
+
+        int expiredPoints = account.getAvailablePoints();
+
+        account.setAvailablePoints(0);
+        account.setUpdatedAt(now);
+        accountRepository.save(account);
+
+        LoyaltyTransaction transaction = LoyaltyTransaction.builder()
                 .account(account)
-                .points(-actualExpiredPoint)
+                .points(-expiredPoints)
                 .transactionType(TransactionType.EXPIRE)
-                .description("Điểm hết hạn")
-                .createdAt(OffsetDateTime.now())
+                .description(expiredPoints
+                        + " points expired because customer did not use service for "
+                        + policy.getPointExpiryMonths()
+                        + " months")
+                .earnedAt(now)
+                .expiresAt(now)
+                .createdAt(now)
+                .expired(true)
                 .build();
 
-        loyaltyTransactionRepository.save(expireTransaction);
+        transactionRepository.save(transaction);
+
+        log.info("Expired {} loyalty points of account {}", expiredPoints, account.getId());
     }
 }
