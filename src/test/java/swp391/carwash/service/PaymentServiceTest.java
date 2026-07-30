@@ -49,6 +49,8 @@ class PaymentServiceTest {
     @Mock
     private LoyaltyService loyaltyService;
     @Mock
+    private PromotionReleaseService promotionReleaseService;
+    @Mock
     private AppUserDetails principal;
 
     private PaymentService paymentService;
@@ -63,6 +65,7 @@ class PaymentServiceTest {
                 paymentRepository,
                 paymentTransactionRepository,
                 loyaltyService,
+                promotionReleaseService,
                 new PaymentSettlementService(invoiceRepository, org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher.class)),
                 new swp391.carwash.security.GarageAccessEvaluator());
 

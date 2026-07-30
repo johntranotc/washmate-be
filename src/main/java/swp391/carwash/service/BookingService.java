@@ -47,6 +47,8 @@ public class BookingService {
     private final PromotionRepository promotionRepository;
     private final NotificationRepository notificationRepository;
     private final PromotionUsageRepository promotionUsageRepository;
+    private final RewardRedemptionRepository rewardRedemptionRepository;
+    private final PromotionReleaseService promotionReleaseService;
     private final swp391.carwash.security.GarageAccessEvaluator garageAccessEvaluator;
 
     @Value("${washmate.payment.vnpay.timeout-minutes:15}")
@@ -389,6 +391,9 @@ public class BookingService {
         booking.setCancelledAt(now);
         booking.setRejectionReason(request.reason());
 
+        // Garage từ chối đơn -> khách không được mất mã khuyến mãi đã dùng.
+        promotionReleaseService.releaseForBooking(booking.getId());
+
         Payment payment = paymentRepository.findByBookingId(bookingId).orElse(null);
         if (payment != null && payment.getStatus() == PaymentStatus.PENDING) {
             payment.setStatus(PaymentStatus.CANCELLED);
@@ -482,6 +487,9 @@ public class BookingService {
             recordPaymentTransaction(payment, PaymentTransactionStatus.CANCELLED, "MANUAL", null);
         }
 
+        // Huỷ đơn -> nhả mã khuyến mãi để khách dùng lại được và không đốt quota campaign.
+        promotionReleaseService.releaseForBooking(booking.getId());
+
         notificationRepository.save(Notification.builder()
                 .userId(booking.getUser().getId())
                 .bookingId(booking.getId())
@@ -513,6 +521,9 @@ public class BookingService {
             payment.setUpdatedAt(now);
             recordPaymentTransaction(payment, PaymentTransactionStatus.CANCELLED, "MANUAL", null);
         }
+
+        // Nhả mã khuyến mãi: đơn không được thực hiện nên mã chưa thực sự được tiêu.
+        promotionReleaseService.releaseForBooking(booking.getId());
 
         Invoice invoice = invoiceRepository.findByBookingId(bookingId).orElse(null);
         return BookingResponse.from(booking, payment, invoice);
@@ -705,12 +716,18 @@ public class BookingService {
                     "Mã khuyến mãi không áp dụng cho garage này");
         }
 
+        requirePromotionOwnership(customerId, promotion);
+
         if (DiscountType.PERCENTAGE.equals(promotion.getDiscountType())) {
 
             discount = totalAmount.multiply(promotion.getDiscountValue())
                     .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
 
+            // maxDiscount chỉ là mức chặn khi > 0. null HOẶC 0 đều nghĩa là "không giới hạn"
+            // -> dữ liệu cũ bị lưu maxDiscount = 0 (do normalize null->0 trước đây) vẫn giảm đúng
+            // thay vì bị ép về 0đ.
             if (promotion.getMaxDiscount() != null
+                    && promotion.getMaxDiscount().compareTo(BigDecimal.ZERO) > 0
                     && discount.compareTo(promotion.getMaxDiscount()) > 0) {
 
                 discount = promotion.getMaxDiscount();
@@ -727,6 +744,38 @@ public class BookingService {
 
         return discount;
     }
+    /**
+     * Voucher sinh ra từ ĐỔI ĐIỂM là tài sản riêng của người đã tiêu điểm, nhưng
+     * {@code Promotion} không có cột chủ sở hữu — quan hệ đó nằm ở {@code RewardRedemption}.
+     *
+     * <p>Trước đây ràng buộc này CHỈ tồn tại trong query liệt kê
+     * ({@code PromotionRepository.findAvailablePromotions}), nên khách chỉ cần đoán
+     * {@code promotionId} (số nguyên tăng dần) là dùng được voucher người khác vừa đổi.
+     *
+     * <p>Nhận diện voucher cá nhân bằng "có RewardRedemption trỏ tới promotion này" thay vì
+     * dựa vào {@code usageLimit == 1} — để không chặn oan mã công khai mà admin cố ý giới hạn
+     * 1 lượt (kiểu ai nhanh hơn thì được).
+     */
+    private void requirePromotionOwnership(Integer customerId, Promotion promotion) {
+        Integer promotionId = promotion.getPromotionId();
+
+        if (!rewardRedemptionRepository.existsByPromotion_PromotionId(promotionId)) {
+            // Không phải voucher đổi điểm -> mã công khai/campaign, không có chủ sở hữu.
+            return;
+        }
+
+        boolean ownedByCustomer = rewardRedemptionRepository
+                .existsByPromotion_PromotionIdAndLoyaltyAccount_User_IdAndStatus(
+                        promotionId, customerId, "COMPLETED");
+
+        if (!ownedByCustomer) {
+            // Trả 404-style message để không tiết lộ rằng mã có tồn tại và thuộc về ai.
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "Mã khuyến mãi không hợp lệ hoặc không thuộc về bạn");
+        }
+    }
+
     private BigDecimal calculateTierDiscount(
             Integer userId,
             Integer garageId,

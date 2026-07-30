@@ -25,6 +25,7 @@ public class VnpayPaymentTimeoutScheduler {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final BookingRepository bookingRepository;
+    private final PromotionReleaseService promotionReleaseService;
 
     @Scheduled(fixedDelayString = "${washmate.payment.vnpay.timeout-scan-ms:60000}")
     @Transactional
@@ -57,6 +58,8 @@ public class VnpayPaymentTimeoutScheduler {
             if (booking.getStatus() == BookingStatus.PENDING) {
                 booking.setStatus(BookingStatus.CANCELLED);
                 booking.setCancelledAt(now);
+                // Hết hạn cửa sổ thanh toán VNPAY -> nhả mã khuyến mãi đã giữ.
+                promotionReleaseService.releaseForBooking(booking.getId());
             }
 
             List<PaymentTransaction> pendingAttempts = paymentTransactionRepository

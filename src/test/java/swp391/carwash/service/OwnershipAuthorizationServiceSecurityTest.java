@@ -72,7 +72,13 @@ class OwnershipAuthorizationServiceSecurityTest {
     private InvoiceService invoiceService;
 
     @Mock
-    private PromotionUsageRepository promotionUsageRepository;    @BeforeEach
+    private PromotionUsageRepository promotionUsageRepository;
+    @Mock
+    private swp391.carwash.repository.RewardRedemptionRepository rewardRedemptionRepository;
+    @Mock
+    private PromotionReleaseService promotionReleaseService;
+
+    @BeforeEach
     void setUp() {
         bookingService = new BookingService(
                 appUserRepository,
@@ -89,6 +95,8 @@ class OwnershipAuthorizationServiceSecurityTest {
                 promotionRepository,
                 notificationRepository,
                 promotionUsageRepository,
+                rewardRedemptionRepository,
+                promotionReleaseService,
                 new swp391.carwash.security.GarageAccessEvaluator());
         paymentService = new PaymentService(
                 bookingRepository,
@@ -96,6 +104,7 @@ class OwnershipAuthorizationServiceSecurityTest {
                 paymentRepository,
                 paymentTransactionRepository,
                 loyaltyService,
+                promotionReleaseService,
                 paymentSettlementService,
                 new swp391.carwash.security.GarageAccessEvaluator());
         invoiceService = new InvoiceService(

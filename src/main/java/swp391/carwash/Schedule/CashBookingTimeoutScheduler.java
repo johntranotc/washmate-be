@@ -38,6 +38,7 @@ public class CashBookingTimeoutScheduler {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final NotificationRepository notificationRepository;
+    private final swp391.carwash.service.PromotionReleaseService promotionReleaseService;
 
     // Số phút ân hạn sau khi khung giờ kết thúc trước khi tự hủy đơn CASH chưa xác nhận.
     @Value("${washmate.booking.cash-timeout.grace-minutes:30}")
@@ -95,6 +96,9 @@ public class CashBookingTimeoutScheduler {
                     .amount(locked.getAmount())
                     .status(PaymentTransactionStatus.CANCELLED)
                     .build());
+
+            // Đơn bị hệ thống tự huỷ -> nhả mã khuyến mãi, khách không đáng bị mất mã.
+            promotionReleaseService.releaseForBooking(lockedBooking.getId());
 
             notificationRepository.save(Notification.builder()
                     .userId(booking.getUser().getId())

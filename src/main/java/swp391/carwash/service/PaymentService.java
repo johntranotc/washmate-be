@@ -47,6 +47,7 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final LoyaltyService loyaltyService;
+    private final PromotionReleaseService promotionReleaseService;
     private final PaymentSettlementService paymentSettlementService;
     private final swp391.carwash.security.GarageAccessEvaluator garageAccessEvaluator;
 
@@ -155,6 +156,8 @@ public class PaymentService {
             booking.setCancelledAt(now);
         }
         loyaltyService.rollbackEarnedPointsForBooking(booking);
+        // Hoàn tiền -> nhả luôn mã khuyến mãi đã dùng cho đơn này.
+        promotionReleaseService.releaseForBooking(booking.getId());
 
         return BookingResponse.from(booking, payment, invoice);
     }
@@ -191,6 +194,8 @@ public class PaymentService {
         booking.setStatus(BookingStatus.CANCELLED);
         booking.setCancelledAt(now);
         recordPaymentTransaction(payment, transactionStatus, provider, providerTxnId, principal.getId());
+        // Đóng thanh toán không thành công -> đơn bị huỷ nên nhả lại mã khuyến mãi.
+        promotionReleaseService.releaseForBooking(booking.getId());
 
         Invoice invoice = invoiceRepository.findByBookingId(booking.getId()).orElse(null);
         return BookingResponse.from(booking, payment, invoice);
