@@ -1,6 +1,7 @@
 package swp391.carwash.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -30,6 +31,8 @@ class VnpayPaymentTimeoutSchedulerTest {
     private PaymentTransactionRepository paymentTransactionRepository;
     @Mock
     private BookingRepository bookingRepository;
+    @Mock
+    private PromotionReleaseService promotionReleaseService;
 
     @Test
     void cancelsExpiredPendingPaymentBookingAndAttempts() {
@@ -59,11 +62,14 @@ class VnpayPaymentTimeoutSchedulerTest {
         when(paymentTransactionRepository.findByPaymentIdAndStatus(200, PaymentTransactionStatus.PENDING))
                 .thenReturn(List.of(attempt));
 
-        new VnpayPaymentTimeoutScheduler(paymentRepository, paymentTransactionRepository, bookingRepository)
+        new VnpayPaymentTimeoutScheduler(
+                paymentRepository, paymentTransactionRepository, bookingRepository, promotionReleaseService)
                 .cancelExpiredPayments();
 
         assertEquals(PaymentStatus.CANCELLED, payment.getStatus());
         assertEquals(BookingStatus.CANCELLED, booking.getStatus());
         assertEquals(PaymentTransactionStatus.CANCELLED, attempt.getStatus());
+        // Hết hạn cửa sổ thanh toán -> phải nhả mã khuyến mãi đang giữ.
+        verify(promotionReleaseService).releaseForBooking(100);
     }
 }

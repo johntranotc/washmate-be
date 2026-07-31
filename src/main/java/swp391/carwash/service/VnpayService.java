@@ -110,18 +110,22 @@ public class VnpayService {
             throw new ApiException(HttpStatus.CONFLICT, "VNPAY payment has expired");
         }
 
-        PaymentTransaction attempt = paymentTransactionRepository
-                .findFirstByPaymentIdAndProviderAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                        paymentId, PROVIDER, PaymentTransactionStatus.PENDING, now)
-                .orElseGet(() -> paymentTransactionRepository.save(PaymentTransaction.builder()
-                        .payment(payment)
-                        .provider(PROVIDER)
-                        .merchantTxnRef(generateMerchantTxnRef(paymentId, now))
-                        .amount(payment.getAmount())
-                        .status(PaymentTransactionStatus.PENDING)
-                        .expiresAt(payment.getExpiresAt())
-                        .createdAt(now)
-                        .build()));
+        // Mỗi lần bấm thanh toán = 1 attempt MỚI với vnp_TxnRef mới.
+        // KHÔNG tái sử dụng attempt PENDING cũ: VNPAY từ chối vnp_TxnRef trùng
+        // (Error.html?code=01) — xảy ra khi khách hủy giữa chừng rồi bấm thanh toán lại,
+        // vì hủy thường không sinh IPN nên attempt cũ vẫn nằm ở PENDING.
+        // Các attempt PENDING cũ được giữ nguyên (không hủy) để nếu khách quay lại
+        // hoàn tất đúng lần thanh toán đó thì IPN vẫn settle được;
+        // khi một attempt settle thành công, cancelOtherPendingAttempts() dọn phần còn lại.
+        PaymentTransaction attempt = paymentTransactionRepository.save(PaymentTransaction.builder()
+                .payment(payment)
+                .provider(PROVIDER)
+                .merchantTxnRef(generateMerchantTxnRef(paymentId, now))
+                .amount(payment.getAmount())
+                .status(PaymentTransactionStatus.PENDING)
+                .expiresAt(payment.getExpiresAt())
+                .createdAt(now)
+                .build());
 
         Map<String, String> parameters = buildPaymentParameters(payment, booking, attempt, clientIp);
         String paymentUrl = signer.buildPaymentUrl(
@@ -157,7 +161,14 @@ public class VnpayService {
                     .orElse(null);
             if (attempt != null) {
                 paymentId = attempt.getPayment().getId();
-                result = isSuccessfulCallback(callbackParameters) ? "success" : "failed";
+                if (isSuccessfulCallback(callbackParameters)) {
+                    result = "success";
+                } else if (isCancelledCallback(callbackParameters)) {
+                    // Khách chủ động bấm hủy trên cổng VNPAY -> không phải lỗi, cho phép thanh toán lại.
+                    result = "cancelled";
+                } else {
+                    result = "failed";
+                }
 
                 // Fallback settle qua return URL — CHỈ dùng khi test local (IPN không tới được localhost).
                 // Production phải tắt (return-fallback-enabled=false, mặc định) — chỉ settle qua IPN.
@@ -247,7 +258,7 @@ public class VnpayService {
             }
             cancelOtherPendingAttempts(payment.getId(), attempt.getId());
         } else {
-            attempt.setStatus("24".equals(callbackParameters.get("vnp_ResponseCode"))
+            attempt.setStatus(isCancelledCallback(callbackParameters)
                     ? PaymentTransactionStatus.CANCELLED
                     : PaymentTransactionStatus.FAILED);
         }
@@ -342,6 +353,11 @@ public class VnpayService {
     private boolean isSuccessfulCallback(Map<String, String> callbackParameters) {
         return "00".equals(callbackParameters.get("vnp_ResponseCode"))
                 && "00".equals(callbackParameters.get("vnp_TransactionStatus"));
+    }
+
+    // VNPAY mã 24 = khách hàng hủy giao dịch.
+    private boolean isCancelledCallback(Map<String, String> callbackParameters) {
+        return "24".equals(callbackParameters.get("vnp_ResponseCode"));
     }
 
     private String generateMerchantTxnRef(Integer paymentId, OffsetDateTime now) {

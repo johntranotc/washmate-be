@@ -1,11 +1,13 @@
 package swp391.carwash.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +26,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.web.util.UriComponentsBuilder;
 import swp391.carwash.common.exception.ApiException;
 import swp391.carwash.config.VnpayProperties;
 import swp391.carwash.dto.VnpayIpnResponse;
@@ -118,10 +121,6 @@ class VnpayServiceTest {
         when(principal.getId()).thenReturn(10);
         when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
         when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-        when(paymentTransactionRepository
-                .findFirstByPaymentIdAndProviderAndStatusAndExpiresAtAfterOrderByCreatedAtDesc(
-                        any(), any(), any(), any()))
-                .thenReturn(Optional.empty());
         when(paymentTransactionRepository.save(any(PaymentTransaction.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -294,6 +293,43 @@ class VnpayServiceTest {
                 redirect.toString());
         assertEquals(PaymentStatus.PENDING, payment.getStatus());
         verify(paymentRepository, never()).save(any());
+    }
+
+    @Test
+    void returnUrlReportsCancelledWhenCustomerCancelsOnGateway() {
+        Map<String, String> callback = signedCallback("5000000", "24", "02");
+        when(paymentTransactionRepository.findByProviderAndMerchantTxnRef("VNPAY", "P200TEST"))
+                .thenReturn(Optional.of(attempt));
+
+        URI redirect = vnpayService.buildReturnRedirect(callback);
+
+        assertEquals(
+                "https://app.example.com/payment/result?result=cancelled&paymentId=200",
+                redirect.toString());
+    }
+
+    // Hồi quy: VNPAY từ chối vnp_TxnRef trùng (Error.html?code=01).
+    // Mỗi lần tạo URL phải sinh merchantTxnRef mới, kể cả khi attempt cũ còn PENDING.
+    @Test
+    void createPaymentUrlAlwaysIssuesNewTxnRefSoRetryAfterCancelWorks() {
+        when(principal.getId()).thenReturn(10);
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
+        when(paymentTransactionRepository.save(any(PaymentTransaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        String firstTxnRef = extractTxnRef(vnpayService.createPaymentUrl(200, principal, "127.0.0.1"));
+        String secondTxnRef = extractTxnRef(vnpayService.createPaymentUrl(200, principal, "127.0.0.1"));
+
+        assertNotEquals(firstTxnRef, secondTxnRef);
+        verify(paymentTransactionRepository, times(2)).save(any(PaymentTransaction.class));
+    }
+
+    private String extractTxnRef(VnpayPaymentUrlResponse response) {
+        return UriComponentsBuilder.fromUriString(response.paymentUrl())
+                .build()
+                .getQueryParams()
+                .getFirst("vnp_TxnRef");
     }
 
     private Map<String, String> signedCallback(String amount, String responseCode, String transactionStatusValue) {

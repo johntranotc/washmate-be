@@ -40,10 +40,13 @@ class CashBookingTimeoutSchedulerTest {
     private PaymentTransactionRepository paymentTransactionRepository;
     @Mock
     private NotificationRepository notificationRepository;
+    @Mock
+    private PromotionReleaseService promotionReleaseService;
 
     private CashBookingTimeoutScheduler scheduler() {
         return new CashBookingTimeoutScheduler(
-                bookingRepository, paymentRepository, paymentTransactionRepository, notificationRepository);
+                bookingRepository, paymentRepository, paymentTransactionRepository, notificationRepository,
+                promotionReleaseService);
     }
 
     @Test
