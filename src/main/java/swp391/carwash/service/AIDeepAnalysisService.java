@@ -14,7 +14,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 import swp391.carwash.common.exception.ApiException;
@@ -60,8 +61,10 @@ public class AIDeepAnalysisService {
     private final GarageAccessEvaluator garageAccessEvaluator;
     private final GeminiProperties geminiProperties;
     private final ObjectMapper objectMapper;
+    private final PlatformTransactionManager transactionManager;
 
-    @Transactional
+    // KHÔNG @Transactional ở đây: lời gọi Gemini (HTTP tới ~15s) phải nằm NGOÀI transaction
+    // để không giữ kết nối/transaction DB mở suốt thời gian gọi API bên ngoài.
     public AIDeepAnalysisResponse analyze(AIDeepAnalysisRequest request, AppUserDetails principal) {
         AIDeepAnalysisRequest safeRequest = request == null ? new AIDeepAnalysisRequest(null, null, null) : request;
         DateRange range = resolveRange(safeRequest.fromDate(), safeRequest.toDate());
@@ -84,76 +87,107 @@ public class AIDeepAnalysisService {
         String snapshotJson = promptBuilderService.buildSnapshotJson(snapshot);
         String prompt = promptBuilderService.buildDeepAnalysisPrompt(snapshotJson);
 
+        // 1) Gọi Gemini + validate NGOÀI transaction.
+        final String rawResponse;
+        final AIDeepAnalysisResult result;
         try {
-            String rawResponse = geminiClient.generateContent(prompt);
-            AIDeepAnalysisResult result = validatorService.parseAndValidateDetectedInsights(rawResponse);
-            List<AIDetectedInsight> candidates = result.insights();
-            List<BusinessInsightResponse> savedInsights = new ArrayList<>();
-            List<AIDeepAnalysisRejection> rejected = new ArrayList<>();
-
-            for (AIDetectedInsight candidate : candidates) {
-                AiInsightVerifier.VerificationResult verification = aiInsightVerifier.verify(candidate, snapshot);
-                if (!verification.accepted()) {
-                    rejected.add(new AIDeepAnalysisRejection(
-                            candidate.claim(),
-                            candidate.evidence() != null ? candidate.evidence().metric() : null,
-                            verification.reason()));
-                    continue;
-                }
-
-                BusinessInsight businessInsight = saveBusinessInsight(candidate, verification, range);
-                InsightAIEnrichment enrichment = saveEnrichment(candidate, verification, businessInsight);
-                savedInsights.add(BusinessInsightResponse.from(businessInsight, toResponse(enrichment)));
-            }
-
-            InsightAnalysisRun run = analysisRunRepository.save(InsightAnalysisRun.builder()
-                    .garageId(garageId)
-                    .requestedBy(principal.getId())
-                    .periodFrom(range.from())
-                    .periodTo(range.to())
-                    .aiModel(geminiProperties.getModel())
-                    .promptVersion(geminiProperties.getPrompt().getVersion())
-                    .rawResponse(rawResponse)
-                    .totalReturned(candidates.size())
-                    .totalKept(savedInsights.size())
-                    .totalRejected(rejected.size())
-                    .build());
-
-            return new AIDeepAnalysisResponse(
-                    snapshot.period(),
-                    garageId,
-                    run.getId(),
-                    candidates.size(),
-                    savedInsights.size(),
-                    rejected.size(),
-                    List.copyOf(savedInsights),
-                    List.copyOf(rejected),
-                    "AI deep analysis completed with backend-verified evidence.");
+            rawResponse = geminiClient.generateContent(prompt);
+            result = validatorService.parseAndValidateDetectedInsights(rawResponse);
         } catch (IllegalArgumentException e) {
             log.error("Validation error for AI deep-analysis response: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.valueOf(422), "AI deep-analysis response invalid: " + e.getMessage());
-        } catch (JsonProcessingException e) {
-            log.error("Error serializing AI deep-analysis enrichment", e);
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error saving AI deep-analysis data");
         } catch (ResponseStatusException | ApiException e) {
             throw e;
         } catch (Exception e) {
             log.error("Error generating AI deep analysis", e);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Error connecting to AI service");
         }
+
+        // 2) Chỉ mở transaction NGẮN để verify + ghi DB (không có I/O bên ngoài trong này).
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        try {
+            return tx.execute(status ->
+                    persistAnalysis(result, snapshot, range, garageId, principal.getId(), rawResponse));
+        } catch (ResponseStatusException | ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Error saving AI deep-analysis data", e);
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error saving AI deep-analysis data");
+        }
+    }
+
+    private AIDeepAnalysisResponse persistAnalysis(
+            AIDeepAnalysisResult result,
+            MetricSnapshot snapshot,
+            DateRange range,
+            Integer garageId,
+            Integer requestedBy,
+            String rawResponse) {
+        List<AIDetectedInsight> candidates = result.insights();
+        List<BusinessInsightResponse> savedInsights = new ArrayList<>();
+        List<AIDeepAnalysisRejection> rejected = new ArrayList<>();
+
+        for (AIDetectedInsight candidate : candidates) {
+            AiInsightVerifier.VerificationResult verification = aiInsightVerifier.verify(candidate, snapshot);
+            if (!verification.accepted()) {
+                rejected.add(new AIDeepAnalysisRejection(
+                        candidate.claim(),
+                        candidate.evidence() != null ? candidate.evidence().metric() : null,
+                        verification.reason()));
+                continue;
+            }
+
+            BusinessInsight businessInsight = saveBusinessInsight(candidate, verification, range, garageId);
+            InsightAIEnrichment enrichment;
+            try {
+                enrichment = saveEnrichment(candidate, verification, businessInsight);
+            } catch (JsonProcessingException e) {
+                log.error("Error serializing AI deep-analysis enrichment", e);
+                throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Error saving AI deep-analysis data");
+            }
+            savedInsights.add(BusinessInsightResponse.from(businessInsight, toResponse(enrichment)));
+        }
+
+        InsightAnalysisRun run = analysisRunRepository.save(InsightAnalysisRun.builder()
+                .garageId(garageId)
+                .requestedBy(requestedBy)
+                .periodFrom(range.from())
+                .periodTo(range.to())
+                .aiModel(geminiProperties.getModel())
+                .promptVersion(geminiProperties.getPrompt().getVersion())
+                .rawResponse(rawResponse)
+                .totalReturned(candidates.size())
+                .totalKept(savedInsights.size())
+                .totalRejected(rejected.size())
+                .build());
+
+        return new AIDeepAnalysisResponse(
+                snapshot.period(),
+                garageId,
+                run.getId(),
+                candidates.size(),
+                savedInsights.size(),
+                rejected.size(),
+                List.copyOf(savedInsights),
+                List.copyOf(rejected),
+                "AI deep analysis completed with backend-verified evidence.");
     }
 
     private BusinessInsight saveBusinessInsight(
             AIDetectedInsight candidate,
             AiInsightVerifier.VerificationResult verification,
-            DateRange range) {
+            DateRange range,
+            Integer garageId) {
         String ruleCode = ruleCodeFor(candidate.evidence().metric());
         ensureRuleConfig(ruleCode, candidate, verification.dbValue());
 
+        // Phải tra theo ĐÚNG garageId: metric được tính riêng cho garage này, nếu tra không
+        // theo phạm vi thì sẽ ghi đè insight của garage khác trong cùng kỳ.
         BusinessInsight insight = businessInsightRepository
-                .findByRuleCodeAndFromDateAndToDate(ruleCode, range.from(), range.to())
+                .findByRuleCodeAndScopeAndPeriod(ruleCode, garageId, range.from(), range.to())
                 .orElseGet(() -> BusinessInsight.builder()
                         .ruleCode(ruleCode)
+                        .garageId(garageId)
                         .fromDate(range.from())
                         .toDate(range.to())
                         .status(InsightStatus.NEW)

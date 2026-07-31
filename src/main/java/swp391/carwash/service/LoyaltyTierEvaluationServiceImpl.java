@@ -15,6 +15,7 @@ import swp391.carwash.service.Loyalty.Support.QuarterCalculator;
 import swp391.carwash.service.Loyalty.Support.QuarterPeriod;
 
 import java.time.LocalDate;
+import swp391.carwash.common.TimeZones;
 import java.time.OffsetDateTime;
 
 
@@ -161,7 +162,7 @@ public class LoyaltyTierEvaluationServiceImpl implements LoyaltyTierEvaluationSe
     }
 
     private boolean isWarningPeriod() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(TimeZones.VIETNAM);
 
         int month = today.getMonthValue();
         int day = today.getDayOfMonth();

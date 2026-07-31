@@ -14,8 +14,10 @@ import swp391.carwash.enums.InsightType;
 @AllArgsConstructor
 @Builder
 @Entity
-@Table(name = "business_insight",
-        uniqueConstraints = @UniqueConstraint(name = "uq_business_insight_rule_period", columnNames = {"rule_code", "from_date", "to_date"}))
+// Khoá duy nhất là expression index (rule_code, COALESCE(garage_id,-1), from_date, to_date)
+// — xem V10__business_insight_garage_scope.sql. Không khai báo bằng @UniqueConstraint được
+// vì JPA không diễn đạt được COALESCE, mà UNIQUE thường sẽ không chặn trùng khi garage_id NULL.
+@Table(name = "business_insight")
 public class BusinessInsight {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,6 +26,13 @@ public class BusinessInsight {
 
     @Column(name = "rule_code", nullable = false, length = 100)
     private String ruleCode;
+
+    /**
+     * Phạm vi của insight: {@code null} = toàn hệ thống (rule engine),
+     * có giá trị = riêng garage đó (AI deep-analysis).
+     */
+    @Column(name = "garage_id")
+    private Integer garageId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)

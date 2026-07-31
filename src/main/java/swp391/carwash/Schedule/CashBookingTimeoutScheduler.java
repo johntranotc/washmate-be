@@ -38,6 +38,7 @@ public class CashBookingTimeoutScheduler {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final NotificationRepository notificationRepository;
+    private final swp391.carwash.service.PromotionReleaseService promotionReleaseService;
 
     // Số phút ân hạn sau khi khung giờ kết thúc trước khi tự hủy đơn CASH chưa xác nhận.
     @Value("${washmate.booking.cash-timeout.grace-minutes:30}")
@@ -46,7 +47,7 @@ public class CashBookingTimeoutScheduler {
     @Scheduled(fixedDelayString = "${washmate.booking.cash-timeout.scan-ms:300000}")
     @Transactional
     public void cancelExpiredCashBookings() {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM);
         List<Booking> candidates = bookingRepository.findPendingBookingsUpToDate(now.toLocalDate());
 
         for (Booking booking : candidates) {
@@ -71,15 +72,20 @@ public class CashBookingTimeoutScheduler {
                 continue; // chỉ xử lý đơn tiền mặt chưa thanh toán
             }
 
-            // Khóa bi quan để tránh đua với thao tác confirm/cancel đồng thời.
+            // Khóa theo đúng thứ tự NHẤT QUÁN với BookingService/PaymentService: BOOKING trước,
+            // PAYMENT sau -> tránh race chéo với confirm/cancel/settle đồng thời.
+            Booking lockedBooking = bookingRepository.findDetailedByIdForUpdate(booking.getId()).orElse(null);
+            if (lockedBooking == null || lockedBooking.getStatus() != BookingStatus.PENDING) {
+                continue;
+            }
             Payment locked = paymentRepository.findDetailedByIdForUpdate(payment.getId()).orElse(null);
             if (locked == null || locked.getStatus() != PaymentStatus.PENDING) {
                 continue;
             }
 
             OffsetDateTime nowOffset = OffsetDateTime.now();
-            booking.setStatus(BookingStatus.CANCELLED);
-            booking.setCancelledAt(nowOffset);
+            lockedBooking.setStatus(BookingStatus.CANCELLED);
+            lockedBooking.setCancelledAt(nowOffset);
 
             locked.setStatus(PaymentStatus.CANCELLED);
             locked.setUpdatedAt(nowOffset);
@@ -90,6 +96,9 @@ public class CashBookingTimeoutScheduler {
                     .amount(locked.getAmount())
                     .status(PaymentTransactionStatus.CANCELLED)
                     .build());
+
+            // Đơn bị hệ thống tự huỷ -> nhả mã khuyến mãi, khách không đáng bị mất mã.
+            promotionReleaseService.releaseForBooking(lockedBooking.getId());
 
             notificationRepository.save(Notification.builder()
                     .userId(booking.getUser().getId())

@@ -1,7 +1,7 @@
 package swp391.carwash.service;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -99,35 +99,52 @@ class LoyaltyServiceTest {
         verify(loyaltyTransactionRepository).save(any(LoyaltyTransaction.class));
     }
 
+    // Các test dưới đây khẳng định: tích điểm là nghiệp vụ PHỤ nên khi không áp dụng được
+    // thì BỎ QUA im lặng, KHÔNG ném exception. Nếu ném, transaction của
+    // BookingService.complete() sẽ bị đánh dấu rollback-only và làm hỏng việc hoàn tất đơn.
+
     @Test
-    void accruePointsThrowsWhenAlreadyEarned() {
+    void accruePointsSkipsWhenAlreadyEarned() {
         when(loyaltyTransactionRepository.existsByBookingIdAndTransactionType(100, TransactionType.EARN)).thenReturn(true);
 
-        assertThrows(IllegalStateException.class, () -> loyaltyService.accruePoints(booking));
+        assertDoesNotThrow(() -> loyaltyService.accruePoints(booking));
 
         verify(loyaltyAccountRepository, never()).save(any());
         verify(loyaltyTransactionRepository, never()).save(any());
     }
 
     @Test
-    void accruePointsThrowsForZeroAmount() {
+    void accruePointsSkipsForZeroAmount() {
         booking.setFinalAmount(BigDecimal.ZERO);
         when(loyaltyTransactionRepository.existsByBookingIdAndTransactionType(100, TransactionType.EARN)).thenReturn(false);
 
-        assertThrows(IllegalArgumentException.class, () -> loyaltyService.accruePoints(booking));
+        assertDoesNotThrow(() -> loyaltyService.accruePoints(booking));
 
         verify(loyaltyAccountRepository, never()).save(any());
+        verify(loyaltyTransactionRepository, never()).save(any());
+    }
+
+    /** Garage chưa bật loyalty (không có LoyaltyPolicy ACTIVE) vẫn phải complete được đơn. */
+    @Test
+    void accruePointsSkipsWhenGarageHasNoActivePolicy() {
+        when(loyaltyTransactionRepository.existsByBookingIdAndTransactionType(100, TransactionType.EARN)).thenReturn(false);
+        when(loyaltyPolicyRepository.findByGarageIdAndStatus(1, RecordStatus.ACTIVE)).thenReturn(Optional.empty());
+
+        assertDoesNotThrow(() -> loyaltyService.accruePoints(booking));
+
+        verify(loyaltyAccountRepository, never()).save(any());
+        verify(loyaltyTransactionRepository, never()).save(any());
     }
 
     @Test
-    void accruePointsThrowsWhenGarageHasNoActiveTier() {
+    void accruePointsSkipsWhenGarageHasNoActiveTier() {
         when(loyaltyTransactionRepository.existsByBookingIdAndTransactionType(100, TransactionType.EARN)).thenReturn(false);
         when(loyaltyPolicyRepository.findByGarageIdAndStatus(1, RecordStatus.ACTIVE)).thenReturn(Optional.of(policy));
         when(loyaltyAccountRepository.findByUserIdAndGarageId(10, 1)).thenReturn(Optional.empty());
         when(membershipTierRepository.findFirstByGarageIdAndStatusOrderByMinPointsAsc(1, RecordStatus.ACTIVE))
                 .thenReturn(Optional.empty());
 
-        assertThrows(IllegalStateException.class, () -> loyaltyService.accruePoints(booking));
+        assertDoesNotThrow(() -> loyaltyService.accruePoints(booking));
 
         verify(loyaltyAccountRepository, never()).save(any());
         verify(loyaltyTransactionRepository, never()).save(any());
@@ -149,6 +166,42 @@ class LoyaltyServiceTest {
         assertEquals(5, account.getTotalPoints());
         assertEquals(5, account.getAvailablePoints());
         verify(loyaltyTransactionRepository).save(any(LoyaltyTransaction.class));
+    }
+
+    /**
+     * Case làm hoàn tiền chết trước đây: hoàn tiền cho đơn đã PAID nhưng chưa COMPLETED
+     * (nên chưa từng tích điểm). Không có gì để thu hồi -> phải no-op, không được ném.
+     */
+    @Test
+    void rollbackEarnedPointsIsNoOpWhenBookingNeverEarned() {
+        when(loyaltyTransactionRepository.findByBookingIdAndTransactionType(100, TransactionType.EARN))
+                .thenReturn(Optional.empty());
+
+        assertDoesNotThrow(() -> loyaltyService.rollbackEarnedPointsForBooking(booking));
+
+        verify(loyaltyAccountRepository, never()).save(any());
+        verify(loyaltyTransactionRepository, never()).save(any());
+    }
+
+    /** Thu hồi 2 lần phải idempotent, không được làm hỏng transaction hoàn tiền. */
+    @Test
+    void rollbackEarnedPointsIsIdempotentWhenAlreadyRolledBack() {
+        LoyaltyTransaction earned = LoyaltyTransaction.builder()
+                .id(99)
+                .account(account)
+                .points(5)
+                .build();
+
+        when(loyaltyTransactionRepository.findByBookingIdAndTransactionType(100, TransactionType.EARN))
+                .thenReturn(Optional.of(earned));
+        when(loyaltyTransactionRepository.existsBySourceTransactionIdAndTransactionType(99, TransactionType.ROLLBACK))
+                .thenReturn(true);
+
+        assertDoesNotThrow(() -> loyaltyService.rollbackEarnedPointsForBooking(booking));
+
+        assertEquals(10, account.getTotalPoints());
+        verify(loyaltyAccountRepository, never()).save(any());
+        verify(loyaltyTransactionRepository, never()).save(any());
     }
 
     @Test

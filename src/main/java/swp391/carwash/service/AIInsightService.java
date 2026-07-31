@@ -99,7 +99,10 @@ public class AIInsightService {
             enrichment.setPromptVersion(geminiProperties.getPrompt().getVersion());
             enrichment.setSource(InsightSource.RULE_BASED);
             enrichment.setEvidenceJson(ruleBasedEvidence(insight));
-            enrichment.setVerified(true);
+            // verified = "số liệu AI đưa ra ĐÃ được backend đối chiếu với metric thật".
+            // Luồng enrich này KHÔNG chạy AiInsightVerifier (chỉ validate cấu trúc + từ khoá),
+            // nên không được khai báo là đã kiểm chứng. Chỉ luồng deep-analysis mới verify thật.
+            enrichment.setVerified(false);
             enrichment.setGeneratedAt(OffsetDateTime.now());
 
             InsightAIEnrichment saved = aiEnrichmentRepository.save(enrichment);

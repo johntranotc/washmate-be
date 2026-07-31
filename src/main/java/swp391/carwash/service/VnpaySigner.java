@@ -54,6 +54,8 @@ public class VnpaySigner {
     }
 
     private String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+        // VNPAY chuẩn hóa hashData/query bằng US_ASCII. Với dữ liệu ASCII hiện tại kết quả không đổi,
+        // nhưng dùng US_ASCII cho khớp spec, tránh lệch chữ ký nếu sau này có ký tự ngoài ASCII.
+        return URLEncoder.encode(value, StandardCharsets.US_ASCII);
     }
 }

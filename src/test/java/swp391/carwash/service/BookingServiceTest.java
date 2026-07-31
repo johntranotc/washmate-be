@@ -26,9 +26,11 @@ import swp391.carwash.entity.Booking;
 import swp391.carwash.entity.BookingSlot;
 import swp391.carwash.entity.Garage;
 import swp391.carwash.entity.Payment;
+import swp391.carwash.entity.Promotion;
 import swp391.carwash.entity.ServicePackage;
 import swp391.carwash.entity.Vehicle;
 import swp391.carwash.enums.BookingStatus;
+import swp391.carwash.enums.DiscountType;
 import swp391.carwash.enums.PaymentMethod;
 import swp391.carwash.enums.PaymentStatus;
 import swp391.carwash.repository.*;
@@ -69,6 +71,10 @@ class BookingServiceTest {
 
     @Mock
     private PromotionUsageRepository promotionUsageRepository;
+    @Mock
+    private swp391.carwash.repository.RewardRedemptionRepository rewardRedemptionRepository;
+    @Mock
+    private PromotionReleaseService promotionReleaseService;
 
     @Mock
     private LoyaltyAccountRepository loyaltyAccountRepository;
@@ -90,6 +96,8 @@ class BookingServiceTest {
                 loyaltyService,promotionRepository,
                 notificationRepository,
                 promotionUsageRepository,
+                rewardRedemptionRepository,
+                promotionReleaseService,
                 new swp391.carwash.security.GarageAccessEvaluator()
         );
         // @Value không được inject khi khởi tạo bằng constructor trong unit test
@@ -142,6 +150,74 @@ class BookingServiceTest {
         verify(bookingRepository, never()).save(any(Booking.class));
     }
 
+    /**
+     * B3: voucher sinh ra từ đổi điểm là tài sản riêng của người đã tiêu điểm.
+     * Trước đây ràng buộc này chỉ có trong query LIỆT KÊ, nên đoán promotionId là dùng được
+     * voucher của người khác.
+     */
+    @Test
+    void createBookingRejectsRedeemedVoucherOwnedByAnotherCustomer() {
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(principal.getId()).thenReturn(10);
+
+        AppUser customer = AppUser.builder().id(10).fullName("Customer").phone("0911111111").build();
+        Garage garage = Garage.builder().id(1).name("Garage").address("Address").phone("0900000000").build();
+        BookingSlot slot = BookingSlot.builder().id(30).garage(garage).maxCapacity(4).build();
+        ServicePackage service = ServicePackage.builder()
+                .id(40).garage(garage).name("Basic Wash")
+                .price(new BigDecimal("50000.00")).duration(30)
+                .build();
+        Vehicle vehicle = Vehicle.builder().id(20).user(customer).licensePlate("59A1-12345").build();
+
+        Promotion voucher = Promotion.builder()
+                .promotionId(555)
+                .garageId(1)
+                .promoCode("WM-G1-ABCDEF12")
+                .discountType(DiscountType.PERCENTAGE)
+                .discountValue(new BigDecimal("20"))
+                .minOrderValue(BigDecimal.ZERO)
+                .usageLimit(1)
+                .usedCount(0)
+                .startDate(java.time.OffsetDateTime.now().minusDays(1))
+                .endDate(java.time.OffsetDateTime.now().plusDays(7))
+                .status(swp391.carwash.enums.PromotionStatus.ACTIVE)
+                .build();
+
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(customer));
+        when(garageRepository.findById(1)).thenReturn(Optional.of(garage));
+        when(bookingSlotRepository.findByIdForUpdate(30)).thenReturn(Optional.of(slot));
+        when(servicePackageRepository.findById(40)).thenReturn(Optional.of(service));
+        when(vehicleRepository.findById(20)).thenReturn(Optional.of(vehicle));
+        when(promotionRepository.findByIdForUpdate(555)).thenReturn(Optional.of(voucher));
+        // Là voucher đổi điểm...
+        when(rewardRedemptionRepository.existsByPromotion_PromotionId(555)).thenReturn(true);
+        // ...nhưng KHÔNG thuộc về khách này.
+        when(rewardRedemptionRepository
+                .existsByPromotion_PromotionIdAndLoyaltyAccount_User_IdAndStatus(555, 10, "COMPLETED"))
+                .thenReturn(false);
+
+        BookingCreateRequest request = new BookingCreateRequest(1, 30, 40, 20, LocalDate.now().plusDays(1), 555, PaymentMethod.CASH);
+
+        ApiException exception = assertThrows(ApiException.class, () -> bookingService.createBooking(request, principal));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    /** B2: huỷ đơn phải nhả lại mã khuyến mãi (không để khách mất mã / đốt quota campaign). */
+    @Test
+    void cancelBookingReleasesPromotion() {
+        Booking booking = detailedBooking(BookingStatus.CONFIRMED);
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId(100)).thenReturn(Optional.empty());
+
+        bookingService.cancelBooking(100, principal);
+
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        verify(promotionReleaseService).releaseForBooking(100);
+    }
+
     @Test
     void completeRejectsUnpaidBooking() {
         Booking booking = detailedBooking(BookingStatus.WASHING);
@@ -170,7 +246,7 @@ class BookingServiceTest {
         Booking booking = detailedBooking(BookingStatus.PENDING);
 
         when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
-        when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
 
         ApiException exception = assertThrows(ApiException.class, () -> bookingService.checkIn(100, principal));
 

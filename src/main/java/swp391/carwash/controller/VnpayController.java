@@ -28,7 +28,17 @@ public class VnpayController {
             @PathVariable Integer id,
             @AuthenticationPrincipal AppUserDetails principal,
             HttpServletRequest request) {
-        return vnpayService.createPaymentUrl(id, principal, request.getRemoteAddr());
+        return vnpayService.createPaymentUrl(id, principal, resolveClientIp(request));
+    }
+
+    // Sau reverse proxy/load balancer, getRemoteAddr() là IP của proxy.
+    // Ưu tiên IP client thật ở đầu chuỗi X-Forwarded-For nếu có.
+    private String resolveClientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 
     @GetMapping("/api/payments/vnpay/ipn")

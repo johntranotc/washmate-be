@@ -3,6 +3,7 @@ package swp391.carwash.security;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -24,6 +25,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -227,6 +229,23 @@ class AuthenticationAuthorizationJwtSecurityTest {
 
             mockMvc.perform(get("/api/admin/users")
                             .header(HttpHeaders.AUTHORIZATION, bearer(accessToken(10, List.of("CUSTOMER")))))
+                    .andExpect(status().isForbidden());
+        }
+
+        // Endpoint tạo nhân sự vận hành: chỉ chặn bằng SecurityConfig.isAdminRequest() (path chứa
+        // segment "admin"), không có @PreAuthorize riêng -> phải test để tránh regress nếu ai đó
+        // đổi path sang chỗ không khớp matcher.
+        @Test
+        void should_returnForbidden_when_staffCallsAdminStaffCreationEndpoint() throws Exception {
+            stubCurrentUser(10, UserStatus.ACTIVE, "STAFF");
+
+            mockMvc.perform(post("/api/admin/staff")
+                            .header(HttpHeaders.AUTHORIZATION, bearer(accessToken(10, List.of("STAFF"))))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                {"email":"a@b.vn","password":"secret123","fullName":"A",
+                                 "phone":"0901234567","role":"STAFF","garageIds":[1]}
+                                """))
                     .andExpect(status().isForbidden());
         }
 

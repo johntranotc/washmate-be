@@ -51,16 +51,9 @@ public class AIResponseValidatorService {
                 throw new IllegalArgumentException("confidenceScore must be between 0 and 1");
             }
 
-            // Check forbidden words
-            String allText = (result.getAiSummary() + " " + result.getAiExplanation() + " " +
-                              String.join(" ", result.getAiRecommendation()) + " " +
-                              result.getAiCampaignSuggestion().toString()).toLowerCase();
-
-            if (allText.contains("platform") || allText.contains("marketplace") ||
-                allText.contains("hoa hồng nền tảng") || allText.contains("đối tác cửa hàng") ||
-                allText.contains("nhà cung cấp độc lập") || allText.contains("doanh thu toàn sàn")) {
-                throw new IllegalArgumentException("Response contains forbidden business terminology");
-            }
+            assertNoForbiddenTerminology(result.getAiSummary() + " " + result.getAiExplanation() + " "
+                    + String.join(" ", result.getAiRecommendation()) + " "
+                    + result.getAiCampaignSuggestion().toString());
 
             return result;
         } catch (Exception e) {
@@ -101,6 +94,7 @@ public class AIResponseValidatorService {
                 if (insight.evidence().value() == null) {
                     throw new IllegalArgumentException("insight.evidence.value must not be null");
                 }
+                assertNoForbiddenTerminology(insight.type() + " " + insight.claim() + " " + insight.suggestedAction());
             }
 
             return new AIDeepAnalysisResult(List.copyOf(insights));
@@ -110,6 +104,17 @@ public class AIResponseValidatorService {
             }
             log.error("Failed to parse and validate AI deep-analysis response", e);
             throw new IllegalArgumentException("Invalid AI deep-analysis response format: " + e.getMessage(), e);
+        }
+    }
+
+    // Chặn thuật ngữ kinh doanh cấm (AutoWash là hệ thống nội bộ, không phải platform nhiều đối tác).
+    // Áp cho cả luồng enrich lẫn deep-analysis để nhất quán.
+    private void assertNoForbiddenTerminology(String text) {
+        String lower = text == null ? "" : text.toLowerCase();
+        if (lower.contains("platform") || lower.contains("marketplace")
+                || lower.contains("hoa hồng nền tảng") || lower.contains("đối tác cửa hàng")
+                || lower.contains("nhà cung cấp độc lập") || lower.contains("doanh thu toàn sàn")) {
+            throw new IllegalArgumentException("Response contains forbidden business terminology");
         }
     }
 

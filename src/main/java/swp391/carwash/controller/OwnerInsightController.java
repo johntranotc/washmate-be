@@ -44,8 +44,11 @@ public class OwnerInsightController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate,
             @RequestParam(required = false) InsightType type,
-            @RequestParam(required = false) String status) {
-        return insightService.getInsights(fromDate, toDate, type, parseStatusFilter(status));
+            @RequestParam(required = false) String status,
+            // Bỏ trống = xem mọi phạm vi (toàn hệ thống + của từng garage). Truyền garageId
+            // để chỉ xem insight riêng của garage đó (do AI deep-analysis sinh ra).
+            @RequestParam(required = false) Integer garageId) {
+        return insightService.getInsights(fromDate, toDate, type, parseStatusFilter(status), garageId);
     }
 
     @GetMapping("/api/owner/insights/{id}")

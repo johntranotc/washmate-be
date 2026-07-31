@@ -3,6 +3,7 @@ package swp391.carwash.controller;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -20,6 +21,7 @@ import java.util.Map;
 public class AnalyticsController {
 
     @GetMapping("/garage-owner/dashboard")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER','MANAGER')")
     @Operation(summary = "Lấy các số liệu tổng quan (Metrics) cho chủ Garage",
             description = "Bao gồm: Doanh thu ngày/tháng, số lượng Booking theo trạng thái, slot thịnh hành")
 //    public ResponseEntity<GarageDashboardMetrics> getGarageDashboard(
@@ -35,6 +37,7 @@ public class AnalyticsController {
     }
 
     @GetMapping("/admin/behavioral-logs")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Admin xem dữ liệu log hành vi đặt lịch hàng tháng của người dùng")
     public ResponseEntity<List<BehavioralLogResponse>> getBehavioralLogs(
             @RequestParam(required = false) Integer userId,
@@ -44,6 +47,7 @@ public class AnalyticsController {
     }
 
     @GetMapping("/admin/customer-segments")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Admin xem phân khúc khách hàng (RFM) tính toán theo tháng")
     public ResponseEntity<List<CustomerSegmentResponse>> getCustomerSegments(
             @RequestParam(required = false) String segmentName,

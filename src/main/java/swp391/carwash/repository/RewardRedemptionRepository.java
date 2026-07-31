@@ -47,4 +47,20 @@ public interface RewardRedemptionRepository extends JpaRepository<RewardRedempti
             Pageable pageable
     );
 
+    /**
+     * Voucher cá nhân (sinh ra từ đổi điểm) có thuộc về user này hay không.
+     *
+     * <p>Dùng khi ÁP DỤNG promotion để chặn việc khách khác đoán promotionId rồi dùng voucher
+     * mà người ta vừa tiêu điểm để đổi. Trước đây ràng buộc này chỉ có trong query LIỆT KÊ
+     * ({@code PromotionRepository.findAvailablePromotions}) mà không có ở đường ghi.
+     */
+    boolean existsByPromotion_PromotionIdAndLoyaltyAccount_User_IdAndStatus(
+            Integer promotionId,
+            Integer userId,
+            String status
+    );
+
+    /** Voucher này có phải voucher cá nhân từ đổi điểm (của bất kỳ ai) hay không. */
+    boolean existsByPromotion_PromotionId(Integer promotionId);
+
 }

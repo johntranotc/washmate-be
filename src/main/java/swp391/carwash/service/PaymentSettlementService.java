@@ -95,6 +95,15 @@ public class PaymentSettlementService {
     }
 
     private String generateInvoiceCode() {
-        return "INV-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase();
+        // Sinh mã tới khi không trùng (kết hợp unique constraint DB làm chốt chặn cuối).
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String code = "INV-" + UUID.randomUUID().toString()
+                    .replace("-", "").substring(0, 16).toUpperCase();
+            if (!invoiceRepository.existsByInvoiceCode(code)) {
+                return code;
+            }
+        }
+        throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                "Không thể tạo mã hóa đơn, vui lòng thử lại");
     }
 }

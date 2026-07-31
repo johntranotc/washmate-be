@@ -69,7 +69,12 @@ public class JwtService {
         if (!expectedType.equals(type)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "Loại Token không hợp lệ");
         }
-        return Integer.parseInt(claims.getSubject());
+        try {
+            return Integer.parseInt(claims.getSubject());
+        } catch (NumberFormatException e) {
+            // Subject bất thường (token hỏng/không đúng định dạng) -> 401 thay vì 500.
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "Token không hợp lệ");
+        }
     }
 
     private String createToken(AppUserDetails user, String type, long ttlSeconds) {

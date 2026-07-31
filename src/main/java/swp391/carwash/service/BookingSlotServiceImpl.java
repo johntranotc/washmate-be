@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import swp391.carwash.common.TimeZones;
 import swp391.carwash.common.exception.ApiException;
 import swp391.carwash.dto.request.BookingSlotCreateRequest;
 import swp391.carwash.dto.response.BookingSlotResponse;
@@ -63,7 +64,15 @@ public class BookingSlotServiceImpl implements BookingSlotService {
                 .findByGarageIdAndStatusOrderByStartTimeAsc(garageId, RecordStatus.ACTIVE);
         Map<Integer, Long> bookedCountBySlot = bookedCountBySlot(garageId, date);
 
+        // Nếu là hôm nay, ẩn các slot đã qua giờ bắt đầu (khớp với validateSlotNotStarted khi đặt),
+        // để hiển thị không lệch với khả năng đặt thực tế.
+        boolean isToday = date.isEqual(LocalDate.now(TimeZones.VIETNAM));
+        LocalTime nowTime = LocalTime.now(TimeZones.VIETNAM);
+
         return slots.stream()
+                .filter(slot -> !(isToday
+                        && slot.getStartTime() != null
+                        && !slot.getStartTime().isAfter(nowTime)))
                 .map(slot -> mapToResponse(slot, bookedCountBySlot.getOrDefault(slot.getId(), 0L)))
                 .toList();
     }
@@ -77,9 +86,11 @@ public class BookingSlotServiceImpl implements BookingSlotService {
 
     @Override
     public BookingSlotResponse updateMaxCapacity(Integer slotId, Integer newMaxCapacity) {
-        BookingSlot slot = findActiveSlot(slotId);
+        // Khóa bi quan dòng slot trước khi đọc số đơn đang giữ chỗ và cập nhật capacity,
+        // tránh đua với booking mới khiến capacity bị hạ xuống dưới số đơn đang có.
+        BookingSlot slot = findActiveSlotForUpdate(slotId);
         Long maxBookedCount = bookingRepository
-                .countActiveBookingsByDateForSlotFromDate(slotId, LocalDate.now(), OCCUPYING_STATUSES)
+                .countActiveBookingsByDateForSlotFromDate(slotId, LocalDate.now(TimeZones.VIETNAM), OCCUPYING_STATUSES)
                 .stream()
                 .max(Long::compareTo)
                 .orElse(0L);
@@ -95,7 +106,7 @@ public class BookingSlotServiceImpl implements BookingSlotService {
         long todayBookedCount = bookingRepository.countActiveBookings(
                 savedSlot.getId(),
                 savedSlot.getGarage().getId(),
-                LocalDate.now(),
+                LocalDate.now(TimeZones.VIETNAM),
                 OCCUPYING_STATUSES);
         return mapToResponse(savedSlot, todayBookedCount);
     }
@@ -104,7 +115,7 @@ public class BookingSlotServiceImpl implements BookingSlotService {
     public void deleteSlot(Integer slotId) {
         BookingSlot slot = findActiveSlot(slotId);
         Long futureActiveBookings = bookingRepository
-                .countActiveBookingsByDateForSlotFromDate(slotId, LocalDate.now(), OCCUPYING_STATUSES)
+                .countActiveBookingsByDateForSlotFromDate(slotId, LocalDate.now(TimeZones.VIETNAM), OCCUPYING_STATUSES)
                 .stream()
                 .mapToLong(Long::longValue)
                 .sum();
@@ -125,6 +136,12 @@ public class BookingSlotServiceImpl implements BookingSlotService {
 
     private BookingSlot findActiveSlot(Integer slotId) {
         return bookingSlotRepository.findById(slotId)
+                .filter(slot -> slot.getStatus() == RecordStatus.ACTIVE)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Booking slot not found"));
+    }
+
+    private BookingSlot findActiveSlotForUpdate(Integer slotId) {
+        return bookingSlotRepository.findByIdForUpdate(slotId)
                 .filter(slot -> slot.getStatus() == RecordStatus.ACTIVE)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Booking slot not found"));
     }

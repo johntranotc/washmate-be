@@ -48,9 +48,11 @@ public class SecurityConfig {
                                 "/api/payments/vnpay/return",
                                 "/api/v1/garages",
                                 "/api/v1/garages/**").permitAll()
-                        // Chặn MỌI prefix admin (cả /api/admin và /api/v1/admin) — controller mới
-                        // dùng prefix nào cũng không lọt xuống anyRequest().authenticated()
-                        .requestMatchers("/api/admin/**", "/api/*/admin/**").hasAnyRole("ADMIN", "OWNER")
+                        // Chặn MỌI path có đoạn "admin" nằm ở bất kỳ tầng nào sau /api/
+                        // (vd /api/admin/**, /api/v1/admin/**, /api/v1/analytics/admin/**) — dùng ** thay vì *
+                        // để controller mới dù đặt path admin lồng sâu cũng không lọt xuống authenticated().
+                        // Segment-aware matcher also supports nested /admin/ paths without an invalid mid-pattern **.
+                        .requestMatchers(this::isAdminRequest).hasAnyRole("ADMIN", "OWNER")
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(exceptions -> exceptions
@@ -67,6 +69,15 @@ public class SecurityConfig {
         String path = PublicPaths.stripContextPath(request.getRequestURI(), request.getContextPath());
         return PublicPaths.isPublicPath(path)
                 || (docsEnabled && PublicPaths.isDocsPath(path));
+    }
+
+    private boolean isAdminRequest(HttpServletRequest request) {
+        String path = PublicPaths.stripContextPath(request.getRequestURI(), request.getContextPath());
+        if (!path.startsWith("/api/")) {
+            return false;
+        }
+        return Arrays.stream(path.substring("/api/".length()).split("/"))
+                .anyMatch("admin"::equals);
     }
 
     @Bean

@@ -27,6 +27,22 @@ public interface BookingRepository extends JpaRepository<Booking, Integer> {
   @Query("select b from Booking b where b.id = :id")
   Optional<Booking> findDetailedByIdForUpdate(@Param("id") Integer id);
 
+  /**
+   * Số booking CHƯA kết thúc đang gán cho nhân viên này tại các garage sắp bị gỡ.
+   * Dùng để chặn việc gỡ chi nhánh làm booking mồ côi người phụ trách — trigger
+   * validate_assigned_staff_role chỉ chạy khi insert/update booking nên DB không tự chặn được.
+   */
+  @Query("""
+      select count(b) from Booking b
+      where b.assignedStaff.id = :staffUserId
+        and b.garage.id in :garageIds
+        and b.status in :activeStatuses
+      """)
+  long countActiveAssignmentsInGarages(
+      @Param("staffUserId") Integer staffUserId,
+      @Param("garageIds") Collection<Integer> garageIds,
+      @Param("activeStatuses") Collection<BookingStatus> activeStatuses);
+
   /** Email khách "inactive": lần đặt gần nhất trước mốc cutoff (tệp win-back). */
   @Query("""
       select b.user.email
@@ -129,6 +145,8 @@ public interface BookingRepository extends JpaRepository<Booking, Integer> {
       @Param("statuses") Collection<BookingStatus> statuses);
 
   long countByStatus(BookingStatus status);
+
+  boolean existsByBookingCode(String bookingCode);
 
   @EntityGraph(attributePaths = { "user", "slot" })
   @Query("""

@@ -3,6 +3,7 @@ package swp391.carwash.service.Loyalty.Support;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import org.springframework.stereotype.Component;
+import swp391.carwash.common.TimeZones;
 
 @Component
 public class QuarterCalculator {
@@ -29,7 +30,7 @@ public class QuarterCalculator {
     }
 
     private LocalDate getCurrentQuarterStart() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(TimeZones.VIETNAM);
         int currentQuarter = ((today.getMonthValue() - 1) / 3) + 1;
 
         return switch (currentQuarter) {

@@ -112,7 +112,8 @@ public class VehicleControllerTest {
 
     @Test
     void testDeleteVehicleSuccess() throws Exception {
-        doNothing().when(vehicleService).delete(eq(100));
+        // delete() nay nhận thêm principal để kiểm quyền sở hữu (chống IDOR).
+        doNothing().when(vehicleService).delete(eq(100), any());
 
         mockMvc.perform(delete("/api/v1/vehicles/100")
                 .with(user(createMockUser()))

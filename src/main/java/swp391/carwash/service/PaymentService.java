@@ -47,6 +47,7 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final LoyaltyService loyaltyService;
+    private final PromotionReleaseService promotionReleaseService;
     private final PaymentSettlementService paymentSettlementService;
     private final swp391.carwash.security.GarageAccessEvaluator garageAccessEvaluator;
 
@@ -74,8 +75,8 @@ public class PaymentService {
 
     @Transactional
     public BookingResponse confirmPayment(Integer paymentId, PaymentConfirmRequest request, AppUserDetails principal) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         return confirmPendingPayment(payment, booking, request, principal.getId());
@@ -124,8 +125,8 @@ public class PaymentService {
 
     @Transactional
     public BookingResponse refundPayment(Integer paymentId, PaymentActionRequest request, AppUserDetails principal) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         if (payment.getMethod() == PaymentMethod.VNPAY) {
@@ -155,6 +156,8 @@ public class PaymentService {
             booking.setCancelledAt(now);
         }
         loyaltyService.rollbackEarnedPointsForBooking(booking);
+        // Hoàn tiền -> nhả luôn mã khuyến mãi đã dùng cho đơn này.
+        promotionReleaseService.releaseForBooking(booking.getId());
 
         return BookingResponse.from(booking, payment, invoice);
     }
@@ -166,8 +169,8 @@ public class PaymentService {
             PaymentStatus paymentStatus,
             PaymentTransactionStatus transactionStatus,
             String invalidStatusMessage) {
-        Payment payment = findDetailedPaymentForUpdate(paymentId);
-        Booking booking = findDetailedBooking(payment.getBooking().getId());
+        Booking booking = lockBookingOfPayment(paymentId);          // khóa booking trước
+        Payment payment = findDetailedPaymentForUpdate(paymentId);  // rồi mới khóa payment
         authorizeGarageOperation(booking, principal);
 
         if (payment.getMethod() == PaymentMethod.VNPAY) {
@@ -191,6 +194,8 @@ public class PaymentService {
         booking.setStatus(BookingStatus.CANCELLED);
         booking.setCancelledAt(now);
         recordPaymentTransaction(payment, transactionStatus, provider, providerTxnId, principal.getId());
+        // Đóng thanh toán không thành công -> đơn bị huỷ nên nhả lại mã khuyến mãi.
+        promotionReleaseService.releaseForBooking(booking.getId());
 
         Invoice invoice = invoiceRepository.findByBookingId(booking.getId()).orElse(null);
         return BookingResponse.from(booking, payment, invoice);
@@ -206,8 +211,16 @@ public class PaymentService {
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Payment not found"));
     }
 
-    private Booking findDetailedBooking(Integer bookingId) {
-        return bookingRepository.findDetailedById(bookingId)
+    /**
+     * Khóa aggregate booking↔payment theo thứ tự NHẤT QUÁN: BOOKING trước, PAYMENT sau.
+     * Mọi flow sửa trạng thái booking/payment (kể cả bên BookingService) đều phải khóa
+     * row booking trước (cùng "ổ khóa") để tránh race chéo giữa hai service. Đọc payment
+     * nhẹ chỉ để lấy bookingId (quan hệ FK cố định, an toàn khi chưa khóa).
+     */
+    private Booking lockBookingOfPayment(Integer paymentId) {
+        Payment ref = paymentRepository.findById(paymentId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Payment not found"));
+        return bookingRepository.findDetailedByIdForUpdate(ref.getBooking().getId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Booking not found"));
     }
 

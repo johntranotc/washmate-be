@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,7 @@ import swp391.carwash.service.insight.InsightRuleConfigRegistry;
 import swp391.carwash.service.insight.InsightRuleEngine;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class InsightService {
     private final ReportAggregationService reportAggregationService;
@@ -38,19 +40,42 @@ public class InsightService {
             LocalDate toDate,
             InsightType type,
             InsightStatus status) {
+        return getInsights(fromDate, toDate, type, status, null);
+    }
+
+    /**
+     * @param garageId filter tuỳ chọn theo phạm vi insight. null = xem mọi phạm vi
+     *                 (toàn hệ thống + của từng garage), giữ nguyên hành vi API cũ.
+     */
+    @Transactional
+    public AutoWashInsightsResponse getInsights(
+            LocalDate fromDate,
+            LocalDate toDate,
+            InsightType type,
+            InsightStatus status,
+            Integer garageId) {
         DateRange range = resolveRange(fromDate, toDate);
         InsightAnalysisContext context = reportAggregationService.aggregate(range.from(), range.to());
 
         InsightType persistedTypeFilter = normalizeType(type);
         List<BusinessInsight> persisted = businessInsightRepository
-                .findForOwnerInsights(range.from(), range.to(), persistedTypeFilter, status);
+                .findForOwnerInsights(range.from(), range.to(), persistedTypeFilter, status, garageId);
 
         // Auto-generate: nếu kỳ này chưa có insight nào được lưu nhưng có dữ liệu kinh doanh,
         // chạy rule engine + lưu ngay để lần đọc này trả về kết quả (không cần bấm "Làm mới phân tích").
+        //
+        // Hai request GET đồng thời trên cùng kỳ có thể cùng thấy persisted rỗng và cùng generate
+        // -> request chậm hơn sẽ vi phạm uq_business_insight_rule_period. Đó không phải lỗi thật:
+        // request kia đã lưu xong, nên chỉ cần đọc lại thay vì để 500 trên endpoint đọc.
         if (persisted.isEmpty() && context.current().hasBusinessData()) {
-            generateAndPersist(range, context);
+            try {
+                generateAndPersist(range, context);
+            } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+                log.info("Một request khác đã generate insight cho kỳ {} - {}, đọc lại kết quả",
+                        range.from(), range.to());
+            }
             persisted = businessInsightRepository
-                    .findForOwnerInsights(range.from(), range.to(), persistedTypeFilter, status);
+                    .findForOwnerInsights(range.from(), range.to(), persistedTypeFilter, status, garageId);
         }
 
         List<BusinessInsightResponse> insights = persisted.stream()
@@ -147,13 +172,17 @@ public class InsightService {
     }
 
     private UpsertResult upsertInsight(InsightResponse candidate, DateRange range) {
+        // Rule engine tính trên dữ liệu TOÀN HỆ THỐNG (reportAggregationService.aggregate không
+        // truyền garageId) -> phạm vi của insight là null. Phải tra đúng nhánh null để không
+        // đụng vào insight per-garage do AI deep-analysis sinh ra trong cùng kỳ.
         BusinessInsight insight = businessInsightRepository
-                .findByRuleCodeAndFromDateAndToDate(candidate.id(), range.from(), range.to())
+                .findByRuleCodeAndScopeAndPeriod(candidate.id(), null, range.from(), range.to())
                 .orElse(null);
         boolean created = insight == null;
         if (created) {
             insight = BusinessInsight.builder()
                     .ruleCode(candidate.id())
+                    .garageId(null)
                     .fromDate(range.from())
                     .toDate(range.to())
                     .status(InsightStatus.NEW)

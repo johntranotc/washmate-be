@@ -13,4 +13,11 @@ public interface LoyaltyPolicyRepository
             Integer garageId,
             RecordStatus status);
 
+    /**
+     * Tra policy theo garage BẤT KỂ status.
+     * Cần cho create(): cột garage_id có UNIQUE nhưng delete() chỉ soft-delete, nên phải
+     * tìm được row đã DELETED để kích hoạt lại thay vì insert row mới (sẽ vi phạm UNIQUE).
+     */
+    Optional<LoyaltyPolicy> findByGarageId(Integer garageId);
+
 }

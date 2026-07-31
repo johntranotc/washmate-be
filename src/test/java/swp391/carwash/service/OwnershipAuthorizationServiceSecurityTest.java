@@ -72,7 +72,13 @@ class OwnershipAuthorizationServiceSecurityTest {
     private InvoiceService invoiceService;
 
     @Mock
-    private PromotionUsageRepository promotionUsageRepository;    @BeforeEach
+    private PromotionUsageRepository promotionUsageRepository;
+    @Mock
+    private swp391.carwash.repository.RewardRedemptionRepository rewardRedemptionRepository;
+    @Mock
+    private PromotionReleaseService promotionReleaseService;
+
+    @BeforeEach
     void setUp() {
         bookingService = new BookingService(
                 appUserRepository,
@@ -89,6 +95,8 @@ class OwnershipAuthorizationServiceSecurityTest {
                 promotionRepository,
                 notificationRepository,
                 promotionUsageRepository,
+                rewardRedemptionRepository,
+                promotionReleaseService,
                 new swp391.carwash.security.GarageAccessEvaluator());
         paymentService = new PaymentService(
                 bookingRepository,
@@ -96,6 +104,7 @@ class OwnershipAuthorizationServiceSecurityTest {
                 paymentRepository,
                 paymentTransactionRepository,
                 loyaltyService,
+                promotionReleaseService,
                 paymentSettlementService,
                 new swp391.carwash.security.GarageAccessEvaluator());
         invoiceService = new InvoiceService(
@@ -121,7 +130,7 @@ class OwnershipAuthorizationServiceSecurityTest {
         @Test
         void should_returnForbidden_when_customerUpdatesAnotherCustomersBookingId() {
             Booking booking = bookingOwnedBy(20);
-            when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+            when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
             stubCustomerPrincipal(10);
 
             ApiException exception = assertThrows(ApiException.class,
@@ -133,7 +142,7 @@ class OwnershipAuthorizationServiceSecurityTest {
         @Test
         void should_returnForbidden_when_customerCancelsAnotherCustomersBookingId() {
             Booking booking = bookingOwnedBy(20);
-            when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(booking));
+            when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
             stubCustomerPrincipal(10);
 
             ApiException exception = assertThrows(ApiException.class,
@@ -160,8 +169,9 @@ class OwnershipAuthorizationServiceSecurityTest {
         @Test
         void should_returnForbidden_when_customerConfirmsAnotherCustomersPaymentId() {
             Payment payment = paymentForBookingOwnedBy(20);
+            when(paymentRepository.findById(200)).thenReturn(Optional.of(payment));
             when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
-            when(bookingRepository.findDetailedById(100)).thenReturn(Optional.of(payment.getBooking()));
+            when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(payment.getBooking()));
             stubCustomerRoleOnly();
 
             ApiException exception = assertThrows(ApiException.class,

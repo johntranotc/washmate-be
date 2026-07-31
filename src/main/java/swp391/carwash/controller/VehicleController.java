@@ -27,8 +27,11 @@ public class VehicleController {
 
     private final VehicleService vehicleService;
 
+    // Endpoint này nhận userId tuỳ ý từ body -> chỉ nhân viên/quản trị được dùng.
+    // Khách hàng tự thêm xe qua POST /my-vehicles (lấy userId từ token).
     @PostMapping
-    @Operation(summary = "Thêm mới xe dựa vào id_user", description = "Tạo mới thông tin phương tiện gắn liền với mã người dùng")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OWNER', 'STAFF', 'MANAGER')")
+    @Operation(summary = "Thêm mới xe dựa vào id_user (Chỉ Admin/Staff)", description = "Tạo mới thông tin phương tiện gắn liền với mã người dùng")
     public ResponseEntity<VehicleResponse> createVehicle(@Valid @RequestBody CreateVehicleRequest request) {
         VehicleResponse response = vehicleService.create(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
@@ -70,15 +73,18 @@ public class VehicleController {
     @Operation(summary = "Cập nhật thông tin xe bằng ID của xe", description = "Chỉnh sửa thông tin chi tiết của một phương tiện theo mã xe")
     public ResponseEntity<VehicleResponse> updateVehicle(
             @PathVariable Integer vehicleId,
-            @Valid @RequestBody UpdateVehicleRequest request) {
-        VehicleResponse response = vehicleService.update(vehicleId, request);
+            @Valid @RequestBody UpdateVehicleRequest request,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        VehicleResponse response = vehicleService.update(vehicleId, request, principal);
         return ResponseEntity.ok(response);
     }
 
     @DeleteMapping("/{vehicleId}")
     @Operation(summary = "Xóa xe theo ID của xe", description = "Xóa bỏ một phương tiện ra khỏi hệ thống dựa theo mã xe")
-    public ResponseEntity<Void> deleteVehicle(@PathVariable Integer vehicleId) {
-        vehicleService.delete(vehicleId);
+    public ResponseEntity<Void> deleteVehicle(
+            @PathVariable Integer vehicleId,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        vehicleService.delete(vehicleId, principal);
         return ResponseEntity.noContent().build();
     }
 

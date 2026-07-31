@@ -25,6 +25,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
 import swp391.carwash.config.GeminiProperties;
 import swp391.carwash.dto.insight.AIDeepAnalysisRequest;
 import swp391.carwash.dto.insight.AIDeepAnalysisResponse;
@@ -72,6 +75,10 @@ class AIDeepAnalysisServiceTest {
     private GarageAccessEvaluator garageAccessEvaluator;
     @Mock
     private AppUserDetails principal;
+    @Mock
+    private PlatformTransactionManager transactionManager;
+    @Mock
+    private TransactionStatus transactionStatus;
 
     private AIDeepAnalysisService service;
 
@@ -94,7 +101,11 @@ class AIDeepAnalysisServiceTest {
                 analysisRunRepository,
                 garageAccessEvaluator,
                 geminiProperties,
-                objectMapper);
+                objectMapper,
+                transactionManager);
+
+        when(transactionManager.getTransaction(any(TransactionDefinition.class)))
+                .thenReturn(transactionStatus);
 
         when(principal.getRoleNames()).thenReturn(List.of("OWNER"));
         when(principal.getId()).thenReturn(7);
@@ -109,7 +120,7 @@ class AIDeepAnalysisServiceTest {
 
         when(geminiClient.generateContent(anyString())).thenReturn("raw-ai-json");
 
-        when(businessInsightRepository.findByRuleCodeAndFromDateAndToDate(anyString(), any(), any()))
+        when(businessInsightRepository.findByRuleCodeAndScopeAndPeriod(anyString(), any(), any(), any()))
                 .thenReturn(Optional.empty());
         when(businessInsightRepository.save(any(BusinessInsight.class))).thenAnswer(invocation -> {
             BusinessInsight insight = invocation.getArgument(0);

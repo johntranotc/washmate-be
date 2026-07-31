@@ -63,7 +63,9 @@ public class AdminPromotionServiceImpl implements AdminPromotionService {
                 .promoCode(promoCode)
                 .discountType(request.discountType())
                 .discountValue(request.discountValue())
-                .maxDiscount(normalizeMoney(request.maxDiscount()))
+                // maxDiscount là cột NULLABLE và null = "không giới hạn mức giảm".
+                // KHÔNG normalize null -> 0, vì 0 bị hiểu là "giảm tối đa 0đ" khi áp dụng.
+                .maxDiscount(request.maxDiscount())
                 .minOrderValue(normalizeMoney(request.minOrderValue()))
                 .usageLimit(request.usageLimit())
                 .usedCount(0)
@@ -118,7 +120,8 @@ public class AdminPromotionServiceImpl implements AdminPromotionService {
         promotion.setPromoCode(promoCode);
         promotion.setDiscountType(request.discountType());
         promotion.setDiscountValue(request.discountValue());
-        promotion.setMaxDiscount(normalizeMoney(request.maxDiscount()));
+        // Xem ghi chú ở create(): null = không giới hạn, không được coerce về 0.
+        promotion.setMaxDiscount(request.maxDiscount());
         promotion.setMinOrderValue(normalizeMoney(request.minOrderValue()));
         promotion.setUsageLimit(request.usageLimit());
         promotion.setStartDate(request.startDate());
