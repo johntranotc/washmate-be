@@ -122,8 +122,7 @@ public class AuthService {
         }
 
         ensureActiveForLogin(user);
-        user.setFailedLoginCount(0);
-        user.setLockedUntil(null);
+        clearLoginLock(user);
         user.setLastLoginAt(now);
         appUserRepository.save(user);
         log.info("Login successful: userId={}", user.getId());
@@ -163,9 +162,8 @@ public class AuthService {
                 user.setStatus(UserStatus.ACTIVE);
             }
             ensureActive(user);
-            
-            user.setFailedLoginCount(0);
-            user.setLockedUntil(null);
+
+            clearLoginLock(user);
             user.setLastLoginAt(now);
             appUserRepository.save(user);
             log.info("Google login successful: userId={}", user.getId());
@@ -186,6 +184,14 @@ public class AuthService {
         String email = otpService.verifyOtp(request.identifier(), request.otp());
         AppUser user = appUserRepository.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "Tài khoản không tồn tại hoặc chưa đăng ký"));
+
+        // Đây cũng là một đường CẤP TOKEN, nên phải tôn trọng khóa đăng nhập giống
+        // login() và loginWithGoogle() — nếu không, brute-force bị khóa vẫn vào được qua OTP.
+        if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(OffsetDateTime.now())) {
+            log.warn("OTP verify attempt on locked account: userId={}", user.getId());
+            throw new ApiException(HttpStatus.LOCKED, "Tài khoản đang bị tạm khóa");
+        }
+
         if (user.getStatus() == UserStatus.PENDING_VERIFY) {
             user.setStatus(UserStatus.ACTIVE);
             appUserRepository.save(user);
@@ -243,9 +249,12 @@ public class AuthService {
         ensureActive(user);
         
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        // Đặt lại mật khẩu qua OTP là đường thoát hợp lệ khỏi lockout — phải gỡ khóa,
+        // nếu không user vẫn ăn 423 ở lần login kế tiếp dù mật khẩu mới đã đúng.
+        clearLoginLock(user);
         appUserRepository.save(user);
         tokenService.revokeAllTokensForUser(user.getId());
-        
+
         log.info("Password reset successful: userId={}", user.getId());
         return tokenService.issueTokens(user.getId());
     }
@@ -265,6 +274,7 @@ public class AuthService {
         }
         
         user.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        clearLoginLock(user);
         appUserRepository.save(user);
         tokenService.revokeAllTokensForUser(user.getId());
         log.info("Password changed: userId={}", userId);
@@ -307,25 +317,48 @@ public class AuthService {
     private void recordFailedLogin(Integer userId, OffsetDateTime now) {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        Integer failedCount = template.execute(status -> {
-            AppUser fresh = appUserRepository.findById(userId).orElse(null);
-            if (fresh == null) {
-                return null;
-            }
-            int count = fresh.getFailedLoginCount() == null ? 1 : fresh.getFailedLoginCount() + 1;
-            fresh.setFailedLoginCount(count);
-            if (count >= loginMaxFailedAttempts) {
-                fresh.setLockedUntil(now.plusMinutes(loginLockMinutes));
-            }
-            appUserRepository.save(fresh);
-            return count;
-        });
+        Integer failedCount;
+        try {
+            failedCount = template.execute(status -> {
+                AppUser fresh = appUserRepository.findById(userId).orElse(null);
+                if (fresh == null) {
+                    return null;
+                }
+                // Cửa sổ khóa đã hết hạn -> đếm lại từ đầu. Nếu không reset, counter vẫn
+                // đứng ở ngưỡng cũ và CHỈ MỘT lần sai kế tiếp là khóa lại ngay,
+                // user không bao giờ được thử lại đủ số lượt cho phép.
+                boolean lockExpired = fresh.getLockedUntil() != null
+                        && !fresh.getLockedUntil().isAfter(now);
+                int previous = (lockExpired || fresh.getFailedLoginCount() == null)
+                        ? 0
+                        : fresh.getFailedLoginCount();
+                int count = previous + 1;
+                fresh.setFailedLoginCount(count);
+                fresh.setLockedUntil(count >= loginMaxFailedAttempts
+                        ? now.plusMinutes(loginLockMinutes)
+                        : null);
+                // Flush ngay trong transaction con để lỗi ghi (constraint, mất kết nối...)
+                // nổ ra ở đây thay vì im lặng làm cơ chế khóa mất tác dụng.
+                appUserRepository.saveAndFlush(fresh);
+                return count;
+            });
+        } catch (RuntimeException ex) {
+            // Không nuốt im lặng: counter không ghi được nghĩa là chống brute-force đang hỏng.
+            log.error("Cannot record failed login attempt: userId={}", userId, ex);
+            return;
+        }
         if (failedCount != null) {
             log.warn("Failed login attempt: userId={}, failedCount={}", userId, failedCount);
             if (failedCount >= loginMaxFailedAttempts) {
                 log.warn("Account locked after {} failed attempts: userId={}", failedCount, userId);
             }
         }
+    }
+
+    /** Gỡ khóa đăng nhập sau khi người dùng đã chứng minh được quyền sở hữu tài khoản. */
+    private void clearLoginLock(AppUser user) {
+        user.setFailedLoginCount(0);
+        user.setLockedUntil(null);
     }
 
     private String normalizeEmail(String email) {

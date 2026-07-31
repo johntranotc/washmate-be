@@ -30,6 +30,7 @@ import swp391.carwash.dto.LoginRequest;
 import swp391.carwash.dto.OtpResponse;
 import swp391.carwash.dto.OtpVerifyRequest;
 import swp391.carwash.dto.RegisterRequest;
+import swp391.carwash.dto.ResetPasswordRequest;
 import swp391.carwash.entity.AppUser;
 import swp391.carwash.entity.Role;
 import swp391.carwash.entity.UserRole;
@@ -287,6 +288,82 @@ class AuthServiceTest {
 
         assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatus());
         verify(appUserRepository, never()).findByEmailIgnoreCase(any());
+    }
+
+    // ── Lockout: reset counter, không cho bypass, gỡ khóa hợp lệ ──────────────
+
+    /**
+     * Hết hạn khóa thì counter phải đếm lại từ đầu. Trước đây counter chỉ reset khi
+     * đăng nhập THÀNH CÔNG, nên sau lần khóa đầu tiên user chỉ cần sai 1 lần là bị
+     * khóa lại ngay, không bao giờ được thử đủ số lượt cho phép.
+     */
+    @Test
+    void failedLoginRestartsCounterAfterLockWindowExpired() {
+        AppUser user = AppUser.builder()
+                .id(10)
+                .email("user@example.com")
+                .passwordHash("hash")
+                .status(UserStatus.ACTIVE)
+                .failedLoginCount(3)
+                .lockedUntil(java.time.OffsetDateTime.now().minusMinutes(1))
+                .build();
+        when(appUserRepository.findByEmailIgnoreCase("user@example.com")).thenReturn(Optional.of(user));
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrong", "hash")).thenReturn(false);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> authService.login(new LoginRequest("user@example.com", null, "wrong")));
+
+        assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatus());
+        assertEquals(1, user.getFailedLoginCount());
+        org.junit.jupiter.api.Assertions.assertNull(user.getLockedUntil());
+    }
+
+    /** Tài khoản đang bị khóa thì OTP cũng không được cấp token — nếu không thì lockout bị bypass. */
+    @Test
+    void verifyOtpRejectsWhileAccountStillLocked() {
+        AppUser user = AppUser.builder()
+                .id(10)
+                .email("user@example.com")
+                .status(UserStatus.ACTIVE)
+                .failedLoginCount(3)
+                .lockedUntil(java.time.OffsetDateTime.now().plusMinutes(10))
+                .build();
+        when(otpService.verifyOtp("user@example.com", "123456")).thenReturn("user@example.com");
+        when(appUserRepository.findByEmailIgnoreCase("user@example.com")).thenReturn(Optional.of(user));
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> authService.verifyOtp(
+                        new OtpVerifyRequest("user@example.com", null, null, "123456", null)));
+
+        assertEquals(HttpStatus.LOCKED, exception.getStatus());
+        verify(tokenService, never()).issueTokens(any());
+    }
+
+    /** Đặt lại mật khẩu qua OTP là đường thoát hợp lệ khỏi lockout -> phải gỡ khóa. */
+    @Test
+    void resetPasswordClearsLoginLock() {
+        AppUser user = AppUser.builder()
+                .id(10)
+                .email("user@example.com")
+                .passwordHash("old-hash")
+                .status(UserStatus.ACTIVE)
+                .failedLoginCount(3)
+                .lockedUntil(java.time.OffsetDateTime.now().plusMinutes(10))
+                .build();
+        AuthResponse expected = new AuthResponse("access", "refresh", "Bearer", 3600, null);
+        when(otpService.verifyOtp("user@example.com", "123456")).thenReturn("user@example.com");
+        when(appUserRepository.findByEmailIgnoreCase("user@example.com")).thenReturn(Optional.of(user));
+        when(passwordEncoder.encode("newsecret123")).thenReturn("new-hash");
+        when(tokenService.issueTokens(10)).thenReturn(expected);
+
+        AuthResponse response = authService.resetPassword(
+                new ResetPasswordRequest("user@example.com", "123456", "newsecret123"));
+
+        assertEquals(expected, response);
+        assertEquals("new-hash", user.getPasswordHash());
+        assertEquals(0, user.getFailedLoginCount());
+        org.junit.jupiter.api.Assertions.assertNull(user.getLockedUntil());
     }
 
     @Test
