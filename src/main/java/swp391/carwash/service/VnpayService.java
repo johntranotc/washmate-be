@@ -97,18 +97,22 @@ public class VnpayService {
             throw new ApiException(HttpStatus.CONFLICT, "Only active booking can create a VNPAY URL");
         }
 
+        // VNPAY từ chối vnp_Amount <= 0 -> chặn sớm với thông báo hiểu được thay vì
+        // để khách nhận Error.html từ cổng. Đơn 0đ (giảm giá hết) phải đi đường xác nhận thủ công.
+        if (payment.getAmount() == null || payment.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Đơn có số tiền bằng 0 nên không cần thanh toán qua VNPAY");
+        }
+
         OffsetDateTime now = OffsetDateTime.now();
         if (payment.getMethod() != PaymentMethod.VNPAY) {
             payment.setMethod(PaymentMethod.VNPAY);
-            payment.setUpdatedAt(now);
         }
-        if (payment.getExpiresAt() == null) {
-            payment.setExpiresAt(now.plusMinutes(properties.getTimeoutMinutes()));
-            payment.setUpdatedAt(now);
-        }
-        if (!payment.getExpiresAt().isAfter(now)) {
-            throw new ApiException(HttpStatus.CONFLICT, "VNPAY payment has expired");
-        }
+        // Hạn thanh toán được LÀM MỚI mỗi lần khách bấm thanh toán: đây là hạn của phiên
+        // giao dịch này, không phải hạn của đơn. Nhờ vậy khách hủy giữa chừng rồi quay lại
+        // trả tiếp vẫn được, thay vì kẹt ở "VNPAY payment has expired" vĩnh viễn.
+        payment.setExpiresAt(now.plusMinutes(properties.getTimeoutMinutes()));
+        payment.setUpdatedAt(now);
 
         // Mỗi lần bấm thanh toán = 1 attempt MỚI với vnp_TxnRef mới.
         // KHÔNG tái sử dụng attempt PENDING cũ: VNPAY từ chối vnp_TxnRef trùng
@@ -149,7 +153,10 @@ public class VnpayService {
         }
     }
 
-    @Transactional
+    // KHÔNG đặt @Transactional ở đây: fallback bên dưới có thể ném lỗi và làm transaction bị
+    // đánh dấu rollback-only; nuốt exception rồi vẫn trả redirect sẽ khiến Spring ném
+    // UnexpectedRollbackException lúc commit -> khách nhận 500 thay vì được đưa về trang kết quả.
+    // Phần đọc dữ liệu ở đây chỉ là read-only, và fallback tự chạy trong transaction riêng.
     public URI buildReturnRedirect(Map<String, String> callbackParameters) {
         String result = "invalid";
         Integer paymentId = null;
@@ -174,14 +181,12 @@ public class VnpayService {
                 // Production phải tắt (return-fallback-enabled=false, mặc định) — chỉ settle qua IPN.
                 if (properties.isReturnFallbackEnabled()
                         && attempt.getStatus() == PaymentTransactionStatus.PENDING) {
-                    try {
-                        VnpayIpnResponse fallbackResponse = processVerifiedIpn(callbackParameters);
-                        if (!"00".equals(fallbackResponse.rspCode())) {
-                            log.warn("Fallback IPN failed: code={}, message={}",
-                                    fallbackResponse.rspCode(), fallbackResponse.message());
-                        }
-                    } catch (Exception e) {
-                        log.error("Fallback IPN processing error", e);
+                    // Đi qua handleIpn: nó bọc sẵn TransactionTemplate riêng và tự nuốt lỗi,
+                    // nên lỗi settle không lây rollback sang luồng redirect này.
+                    VnpayIpnResponse fallbackResponse = handleIpn(callbackParameters);
+                    if (!"00".equals(fallbackResponse.rspCode())) {
+                        log.warn("Fallback IPN failed: code={}, message={}",
+                                fallbackResponse.rspCode(), fallbackResponse.message());
                     }
                 }
             }

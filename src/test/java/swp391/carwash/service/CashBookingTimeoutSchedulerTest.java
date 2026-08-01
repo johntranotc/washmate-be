@@ -43,10 +43,32 @@ class CashBookingTimeoutSchedulerTest {
     @Mock
     private PromotionReleaseService promotionReleaseService;
 
+    /**
+     * Scheduler chạy mỗi đơn trong transaction RIÊNG qua TransactionTemplate, nên test cần
+     * một PlatformTransactionManager tối giản: mở transaction giả rồi để callback chạy thẳng.
+     */
+    private static org.springframework.transaction.PlatformTransactionManager passthroughTxManager() {
+        return new org.springframework.transaction.PlatformTransactionManager() {
+            @Override
+            public org.springframework.transaction.TransactionStatus getTransaction(
+                    org.springframework.transaction.TransactionDefinition definition) {
+                return new org.springframework.transaction.support.SimpleTransactionStatus();
+            }
+
+            @Override
+            public void commit(org.springframework.transaction.TransactionStatus status) {
+            }
+
+            @Override
+            public void rollback(org.springframework.transaction.TransactionStatus status) {
+            }
+        };
+    }
+
     private CashBookingTimeoutScheduler scheduler() {
         return new CashBookingTimeoutScheduler(
                 bookingRepository, paymentRepository, paymentTransactionRepository, notificationRepository,
-                promotionReleaseService);
+                promotionReleaseService, passthroughTxManager());
     }
 
     @Test

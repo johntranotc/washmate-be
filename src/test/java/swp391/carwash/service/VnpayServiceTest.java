@@ -136,6 +136,42 @@ class VnpayServiceTest {
         verify(paymentTransactionRepository).save(any(PaymentTransaction.class));
     }
 
+    /**
+     * Hồi quy: hạn thanh toán là hạn của MỘT PHIÊN, không phải hạn của đơn. Trước đây
+     * expiresAt được set lúc tạo booking và không bao giờ gia hạn, nên đơn đặt trước quá
+     * timeout là kẹt "VNPAY payment has expired" vĩnh viễn.
+     */
+    @Test
+    void createPaymentUrlRenewsExpiredSessionInsteadOfRejecting() {
+        OffsetDateTime stale = OffsetDateTime.now().minusDays(2);
+        payment.setExpiresAt(stale);
+        when(principal.getId()).thenReturn(10);
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
+        when(paymentTransactionRepository.save(any(PaymentTransaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        VnpayPaymentUrlResponse response = vnpayService.createPaymentUrl(200, principal, "127.0.0.1");
+
+        assertTrue(payment.getExpiresAt().isAfter(OffsetDateTime.now()));
+        assertTrue(response.expiresAt().isAfter(OffsetDateTime.now()));
+    }
+
+    /** VNPAY từ chối vnp_Amount = 0 -> phải chặn sớm với thông báo hiểu được. */
+    @Test
+    void createPaymentUrlRejectsZeroAmount() {
+        payment.setAmount(java.math.BigDecimal.ZERO);
+        when(principal.getId()).thenReturn(10);
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(paymentRepository.findDetailedByIdForUpdate(200)).thenReturn(Optional.of(payment));
+
+        ApiException ex = assertThrows(ApiException.class,
+                () -> vnpayService.createPaymentUrl(200, principal, "127.0.0.1"));
+
+        assertEquals(HttpStatus.CONFLICT, ex.getStatus());
+        verify(paymentTransactionRepository, never()).save(any(PaymentTransaction.class));
+    }
+
     @Test
     void createPaymentUrlRejectsAnotherCustomer() {
         when(principal.getId()).thenReturn(999);

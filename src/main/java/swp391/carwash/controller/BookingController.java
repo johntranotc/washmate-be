@@ -5,6 +5,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import swp391.carwash.dto.BookingAbortRequest;
 import swp391.carwash.dto.BookingCreateRequest;
 import swp391.carwash.dto.BookingRejectRequest;
 import swp391.carwash.dto.BookingResponse;
@@ -22,9 +23,15 @@ import swp391.carwash.service.BookingService;
 public class BookingController {
     private final BookingService bookingService;
 
+    /**
+     * Trả về dạng phân trang (Page): JSON có {@code content}, {@code totalElements},
+     * {@code totalPages}... Client cũ đọc thẳng mảng cần đổi sang đọc {@code content}.
+     */
     @GetMapping("/api/bookings/me")
-    public List<BookingResponse> getMyBookings(@AuthenticationPrincipal AppUserDetails principal) {
-        return bookingService.getMyBookings(principal);
+    public Page<BookingResponse> getMyBookings(
+            Pageable pageable,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        return bookingService.getMyBookings(principal, pageable);
     }
 
     @PostMapping("/api/bookings")
@@ -108,5 +115,26 @@ public class BookingController {
             @PathVariable Integer id,
             @AuthenticationPrincipal AppUserDetails principal) {
         return bookingService.markNoShow(id, principal);
+    }
+
+    /** Garage dừng đơn ĐANG PHỤC VỤ (CHECKED_IN/WASHING) — khách bỏ về, xe không đủ điều kiện... */
+    @PostMapping("/api/bookings/{id}/abort")
+    public BookingResponse abortBooking(
+            @PathVariable Integer id,
+            @Valid @RequestBody BookingAbortRequest request,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        return bookingService.abortBooking(id, request, principal);
+    }
+
+    /**
+     * Gỡ án vắng mặt cho một đơn (NO_SHOW -> CANCELLED). Đường kêu oan cho khách bị chặn
+     * đặt lịch do lỡ hẹn có lý do chính đáng hoặc bị staff bấm nhầm.
+     */
+    @PostMapping("/api/bookings/{id}/excuse-no-show")
+    public BookingResponse excuseNoShow(
+            @PathVariable Integer id,
+            @Valid @RequestBody BookingAbortRequest request,
+            @AuthenticationPrincipal AppUserDetails principal) {
+        return bookingService.excuseNoShow(id, request, principal);
     }
 }

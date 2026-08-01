@@ -4,10 +4,13 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import swp391.carwash.entity.Booking;
 import swp391.carwash.entity.Notification;
 import swp391.carwash.entity.Payment;
@@ -30,6 +33,7 @@ import swp391.carwash.repository.PaymentTransactionRepository;
  * tương lai. VNPAY do {@link swp391.carwash.service.VnpayPaymentTimeoutScheduler}
  * xử lý riêng theo expiresAt.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class CashBookingTimeoutScheduler {
@@ -39,16 +43,21 @@ public class CashBookingTimeoutScheduler {
     private final PaymentTransactionRepository paymentTransactionRepository;
     private final NotificationRepository notificationRepository;
     private final swp391.carwash.service.PromotionReleaseService promotionReleaseService;
+    private final PlatformTransactionManager transactionManager;
 
     // Số phút ân hạn sau khi khung giờ kết thúc trước khi tự hủy đơn CASH chưa xác nhận.
     @Value("${washmate.booking.cash-timeout.grace-minutes:30}")
     private long graceMinutes;
 
+    // KHÔNG @Transactional ở đây: một đơn lỗi không được phép rollback cả mẻ rồi làm
+    // scheduler kẹt vĩnh viễn ở đúng đơn đó. Mỗi đơn chạy trong transaction riêng.
     @Scheduled(fixedDelayString = "${washmate.booking.cash-timeout.scan-ms:300000}")
-    @Transactional
     public void cancelExpiredCashBookings() {
         LocalDateTime now = LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM);
         List<Booking> candidates = bookingRepository.findPendingBookingsUpToDate(now.toLocalDate());
+
+        TransactionTemplate perBooking = new TransactionTemplate(transactionManager);
+        perBooking.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 
         for (Booking booking : candidates) {
             if (booking.getStatus() != BookingStatus.PENDING
@@ -65,22 +74,33 @@ public class CashBookingTimeoutScheduler {
                 continue;
             }
 
+            try {
+                perBooking.executeWithoutResult(status -> cancelOne(booking));
+            } catch (RuntimeException ex) {
+                log.error("Không tự huỷ được đơn CASH quá hạn {} - bỏ qua, thử lại lần quét sau",
+                        booking.getId(), ex);
+            }
+        }
+    }
+
+    private void cancelOne(Booking booking) {
+        {
             Payment payment = paymentRepository.findByBookingId(booking.getId()).orElse(null);
             if (payment == null
                     || payment.getMethod() != PaymentMethod.CASH
                     || payment.getStatus() != PaymentStatus.PENDING) {
-                continue; // chỉ xử lý đơn tiền mặt chưa thanh toán
+                return; // chỉ xử lý đơn tiền mặt chưa thanh toán
             }
 
             // Khóa theo đúng thứ tự NHẤT QUÁN với BookingService/PaymentService: BOOKING trước,
             // PAYMENT sau -> tránh race chéo với confirm/cancel/settle đồng thời.
             Booking lockedBooking = bookingRepository.findDetailedByIdForUpdate(booking.getId()).orElse(null);
             if (lockedBooking == null || lockedBooking.getStatus() != BookingStatus.PENDING) {
-                continue;
+                return;
             }
             Payment locked = paymentRepository.findDetailedByIdForUpdate(payment.getId()).orElse(null);
             if (locked == null || locked.getStatus() != PaymentStatus.PENDING) {
-                continue;
+                return;
             }
 
             OffsetDateTime nowOffset = OffsetDateTime.now();

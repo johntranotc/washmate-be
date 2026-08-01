@@ -14,6 +14,7 @@ import swp391.carwash.enums.RecordStatus;
 import swp391.carwash.repository.ServicePackageRepository;
 import swp391.carwash.repository.GarageRepository;
 import swp391.carwash.entity.Garage;
+import swp391.carwash.security.AppUserDetails;
 
 import java.util.List;
 
@@ -23,10 +24,26 @@ public class ServicePackageServiceImpl implements ServicePackageService {
 
     private final ServicePackageRepository servicePackageRepository;
     private final GarageRepository garageRepository;
+    private final swp391.carwash.security.GarageAccessEvaluator garageAccessEvaluator;
+
+    /**
+     * Chặn STAFF của garage này quản lý gói dịch vụ của garage khác.
+     *
+     * <p>{@code @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")} ở controller chỉ lọc vai
+     * trò, không biết người đó phụ trách garage nào. Thiếu lớp này thì bất kỳ STAFF nào cũng
+     * ĐỔI GIÁ hoặc xoá gói dịch vụ của garage khác được — mà giá gói chính là
+     * {@code booking.totalAmount}, nên đây là đường tác động thẳng vào doanh thu.
+     */
+    private void authorizeGarage(Integer garageId, AppUserDetails principal) {
+        if (!garageAccessEvaluator.canOperate(garageId, principal)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Bạn không có quyền quản lý gói dịch vụ của garage này");
+        }
+    }
 
     @Override
     @Transactional
-    public ServicePackageResponse createService(CreateServicePackageRequest request) {
+    public ServicePackageResponse createService(CreateServicePackageRequest request, AppUserDetails principal) {
+        authorizeGarage(request.getGarageId(), principal);
         Garage garage = garageRepository.findById(request.getGarageId())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                         "Không tìm thấy Garage với ID: " + request.getGarageId()));
@@ -71,10 +88,14 @@ public class ServicePackageServiceImpl implements ServicePackageService {
 
     @Override
     @Transactional
-    public ServicePackageResponse updateService(Long id, UpdateServicePackageRequest request) {
+    public ServicePackageResponse updateService(Long id, UpdateServicePackageRequest request,
+            AppUserDetails principal) {
         ServicePackage servicePackage = servicePackageRepository.findById(id.intValue())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                         "Không tìm thấy gói dịch vụ với ID: " + id));
+        // Kiểm quyền sau khi load vì phải biết gói này thuộc garage nào.
+        // Đây là đường đổi GIÁ nên bỏ sót ở đây là để người ngoài chỉnh doanh thu garage khác.
+        authorizeGarage(servicePackage.getGarage().getId(), principal);
 
         // Tiến hành cập nhật thông tin mới từ Request DTO vào Entity
         servicePackage.setName(request.getName());
@@ -92,10 +113,11 @@ public class ServicePackageServiceImpl implements ServicePackageService {
 
     @Override
     @Transactional
-    public void deleteService(Long id) {
+    public void deleteService(Long id, AppUserDetails principal) {
         ServicePackage servicePackage = servicePackageRepository.findById(id.intValue())
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND,
                         "Không tìm thấy gói dịch vụ với ID: " + id));
+        authorizeGarage(servicePackage.getGarage().getId(), principal);
 
         // SOFT DELETE, không xoá cứng: booking.service_id là FK NOT NULL nên xoá cứng một gói
         // đã từng có đơn sẽ vi phạm khoá ngoại (hoặc phá lịch sử đơn nếu FK bị nới).

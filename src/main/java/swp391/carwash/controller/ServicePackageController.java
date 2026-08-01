@@ -24,10 +24,14 @@ public class ServicePackageController {
     private final ServicePackageService servicePackageService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Tạo gói dịch vụ mới")
-    public ResponseEntity<ServicePackageResponse> createService(@Valid @RequestBody CreateServicePackageRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(servicePackageService.createService(request));
+    public ResponseEntity<ServicePackageResponse> createService(
+            @Valid @RequestBody CreateServicePackageRequest request,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            swp391.carwash.security.AppUserDetails principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(servicePackageService.createService(request, principal));
     }
 
     @GetMapping("/garage/{garageId}")
@@ -43,19 +47,24 @@ public class ServicePackageController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Chỉnh sửa thông tin gói dịch vụ")
     public ResponseEntity<ServicePackageResponse> updateService(
             @PathVariable Long id,
-            @Valid @RequestBody UpdateServicePackageRequest request) {
-        return ResponseEntity.ok(servicePackageService.updateService(id, request));
+            @Valid @RequestBody UpdateServicePackageRequest request,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            swp391.carwash.security.AppUserDetails principal) {
+        return ResponseEntity.ok(servicePackageService.updateService(id, request, principal));
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN','OWNER','STAFF')")
+    @PreAuthorize("hasAnyRole('ADMIN','OWNER')")
     @Operation(summary = "Xóa gói dịch vụ")
-    public ResponseEntity<Void> deleteService(@PathVariable Long id) {
-        servicePackageService.deleteService(id);
+    public ResponseEntity<Void> deleteService(
+            @PathVariable Long id,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            swp391.carwash.security.AppUserDetails principal) {
+        servicePackageService.deleteService(id, principal);
         return ResponseEntity.noContent().build();
     }
 }

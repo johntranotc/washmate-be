@@ -58,12 +58,16 @@ public class BookingControllerTest {
         BookingResponse response = new BookingResponse(100, null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, null);
 
-        when(bookingService.getMyBookings(any(AppUserDetails.class))).thenReturn(List.of(response));
+        // Endpoint đã chuyển sang phân trang -> body là Page, dữ liệu nằm trong "content".
+        when(bookingService.getMyBookings(
+                any(AppUserDetails.class),
+                any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(response)));
 
         mockMvc.perform(get("/api/bookings/me")
                 .with(user(createMockUser())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(100));
+                .andExpect(jsonPath("$.content[0].id").value(100));
     }
 
     @Test

@@ -27,7 +27,10 @@ public record BookingResponse(
         ServiceInfo service,
         VehicleInfo vehicle,
         PaymentInfo payment,
-        InvoiceInfo invoice
+        InvoiceInfo invoice,
+        // Thêm ở CUỐI để JSON chỉ được bổ sung field, không phá client đang chạy.
+        OffsetDateTime cancelledAt,
+        OffsetDateTime noShowAt
 ) {
     public BookingResponse(
             Integer id,
@@ -68,7 +71,9 @@ public record BookingResponse(
                 service,
                 vehicle,
                 payment,
-                invoice
+                invoice,
+                null,
+                null
         );
     }
 
@@ -91,8 +96,10 @@ public record BookingResponse(
                 new SlotInfo(booking.getSlot().getId(), booking.getSlot().getStartTime(), booking.getSlot().getEndTime()),
                 new ServiceInfo(booking.getService().getId(), booking.getService().getName(), booking.getService().getPrice(), booking.getService().getDuration()),
                 new VehicleInfo(booking.getVehicle().getId(), booking.getVehicle().getLicensePlate(), booking.getVehicle().getBrand(), booking.getVehicle().getModel()),
-                payment == null ? null : new PaymentInfo(payment.getId(), payment.getAmount(), payment.getMethod().name(), payment.getStatus().name(), payment.getPaidAt()),
-                invoice == null ? null : new InvoiceInfo(invoice.getId(), invoice.getInvoiceCode(), invoice.getTotalAmount(), invoice.getStatus().name(), invoice.getIssuedAt(), invoice.getPaidAt())
+                payment == null ? null : new PaymentInfo(payment.getId(), payment.getAmount(), payment.getMethod().name(), payment.getStatus().name(), payment.getPaidAt(), payment.getExpiresAt()),
+                invoice == null ? null : new InvoiceInfo(invoice.getId(), invoice.getInvoiceCode(), invoice.getTotalAmount(), invoice.getStatus().name(), invoice.getIssuedAt(), invoice.getPaidAt()),
+                booking.getCancelledAt(),
+                booking.getNoShowAt()
         );
     }
 
@@ -111,7 +118,13 @@ public record BookingResponse(
     public record VehicleInfo(Integer id, String licensePlate, String brand, String model) {
     }
 
-    public record PaymentInfo(Integer id, BigDecimal amount, String method, String status, OffsetDateTime paidAt) {
+    /**
+     * @param expiresAt hạn của PHIÊN thanh toán online đang mở (null = không có phiên nào).
+     *                  Frontend cần trường này để đếm ngược và biết khi nào phải ẩn nút
+     *                  "Thanh toán ngay" thay vì để khách bấm vào một phiên đã chết.
+     */
+    public record PaymentInfo(Integer id, BigDecimal amount, String method, String status,
+                              OffsetDateTime paidAt, OffsetDateTime expiresAt) {
     }
 
     public record InvoiceInfo(Integer id, String invoiceCode, BigDecimal totalAmount, String status, OffsetDateTime issuedAt, OffsetDateTime paidAt) {

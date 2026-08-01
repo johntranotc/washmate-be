@@ -2,8 +2,10 @@ package swp391.carwash.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -102,7 +104,17 @@ class BookingServiceTest {
         );
         // @Value không được inject khi khởi tạo bằng constructor trong unit test
         org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "maxAdvanceDays", 30);
-        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "paymentTimeoutMinutes", 15);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "noShowGraceMinutes", 15);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "checkInEarlyMinutes", 30);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "cancelCutoffMinutes", 0);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "maxOpenBookingsPerCustomer", 5);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "maxOpenBookingsPerGaragePerDay", 2);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "maxNoShowsBeforeBlock", 2);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "noShowBlockWindowDays", 90);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "cashSharePerSlot", 0.5d);
+        // Mặc định test coi như khách quen; test nào cần tài khoản mới thì bật riêng.
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "newAccountMaxOpen", 0);
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "newAccountMaxAdvanceDays", 0);
     }
 
     @Test
@@ -147,6 +159,66 @@ class BookingServiceTest {
         ApiException exception = assertThrows(ApiException.class, () -> bookingService.createBooking(request, principal));
 
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatus());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    /**
+     * Không cho đặt slot sát giờ: phải trước giờ hẹn ít nhất min-lead-minutes.
+     * Ngưỡng này dùng chung với bộ lọc hiển thị slot ở BookingSlotServiceImpl.
+     */
+    @Test
+    void createBookingRejectsSlotStartingSoonerThanMinLeadTime() {
+        org.springframework.test.util.ReflectionTestUtils.setField(bookingService, "minLeadMinutes", 30);
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(principal.getId()).thenReturn(10);
+
+        AppUser customer = AppUser.builder().id(10).fullName("Customer").phone("0911111111").build();
+        Garage garage = Garage.builder()
+                .id(1)
+                .name("Garage")
+                .address("Address")
+                .phone("0900000000")
+                .status(swp391.carwash.enums.GarageStatus.ACTIVE)
+                .build();
+        // Slot bắt đầu sau 10 phút nữa -> chưa đủ 30 phút lead time.
+        java.time.LocalDateTime slotStart = java.time.LocalDateTime
+                .now(swp391.carwash.common.TimeZones.VIETNAM).plusMinutes(10);
+        BookingSlot slot = BookingSlot.builder()
+                .id(30)
+                .garage(garage)
+                .startTime(slotStart.toLocalTime())
+                .endTime(slotStart.toLocalTime().plusHours(1))
+                .maxCapacity(5)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        ServicePackage service = ServicePackage.builder()
+                .id(40)
+                .garage(garage)
+                .name("Basic Wash")
+                .price(new BigDecimal("50000.00"))
+                .duration(30)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        Vehicle vehicle = Vehicle.builder()
+                .id(20)
+                .user(customer)
+                .licensePlate("59A1-12345")
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(customer));
+        when(garageRepository.findById(1)).thenReturn(Optional.of(garage));
+        when(bookingSlotRepository.findByIdForUpdate(30)).thenReturn(Optional.of(slot));
+        when(servicePackageRepository.findById(40)).thenReturn(Optional.of(service));
+        when(vehicleRepository.findById(20)).thenReturn(Optional.of(vehicle));
+
+        BookingCreateRequest request = new BookingCreateRequest(
+                1, 30, 40, 20, slotStart.toLocalDate(), null, PaymentMethod.CASH);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> bookingService.createBooking(request, principal));
+
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
         verify(bookingRepository, never()).save(any(Booking.class));
     }
 
@@ -268,16 +340,257 @@ class BookingServiceTest {
 
         when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
         when(principal.getId()).thenReturn(10);
-        when(bookingRepository.findByUserIdOrderByCreatedAtDesc(10)).thenReturn(List.of(booking));
+        org.springframework.data.domain.Pageable pageable =
+                org.springframework.data.domain.PageRequest.of(0, 20);
+        when(bookingRepository.findByUserIdOrderByCreatedAtDesc(10, pageable))
+                .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of(booking), pageable, 1));
         when(paymentRepository.findByBookingIdIn(List.of(100))).thenReturn(List.of(payment));
         when(invoiceRepository.findByBookingIdIn(List.of(100))).thenReturn(List.of());
 
-        List<BookingResponse> response = bookingService.getMyBookings(principal);
+        org.springframework.data.domain.Page<BookingResponse> response =
+                bookingService.getMyBookings(principal, pageable);
 
-        assertEquals(1, response.size());
-        assertEquals(100, response.get(0).id());
-        assertEquals(200, response.get(0).payment().id());
+        assertEquals(1, response.getTotalElements());
+        assertEquals(100, response.getContent().get(0).id());
+        assertEquals(200, response.getContent().get(0).payment().id());
         verify(bookingRepository, never()).findDetailedById(anyInt());
+    }
+
+    /**
+     * Đơn đang phục vụ mà chưa thu được tiền từng là ngõ cụt tuyệt đối: complete đòi PAID,
+     * cancel chỉ nhận PENDING/CONFIRMED, no-show chỉ nhận CONFIRMED. Đơn kẹt và chiếm slot.
+     */
+    @Test
+    void abortClosesUnpaidWashingBookingAndReleasesSlot() {
+        Booking booking = detailedBooking(BookingStatus.WASHING);
+        Payment payment = Payment.builder()
+                .id(200)
+                .booking(booking)
+                .garage(booking.getGarage())
+                .amount(booking.getFinalAmount())
+                .method(PaymentMethod.CASH)
+                .status(PaymentStatus.PENDING)
+                .build();
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId(100)).thenReturn(Optional.of(payment));
+        when(invoiceRepository.findByBookingId(100)).thenReturn(Optional.empty());
+
+        bookingService.abortBooking(100,
+                new swp391.carwash.dto.BookingAbortRequest("Khách bỏ về giữa chừng"), principal);
+
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        assertEquals("Khách bỏ về giữa chừng", booking.getRejectionReason());
+        assertEquals(PaymentStatus.CANCELLED, payment.getStatus());
+        verify(promotionReleaseService).releaseForBooking(100);
+    }
+
+    /** Đơn đã thu tiền phải đi đường refund để tiền và trạng thái đơn luôn khớp nhau. */
+    @Test
+    void abortRejectsPaidBooking() {
+        Booking booking = detailedBooking(BookingStatus.WASHING);
+        Payment payment = Payment.builder()
+                .id(200)
+                .booking(booking)
+                .garage(booking.getGarage())
+                .amount(booking.getFinalAmount())
+                .method(PaymentMethod.CASH)
+                .status(PaymentStatus.PAID)
+                .build();
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId(100)).thenReturn(Optional.of(payment));
+
+        ApiException exception = assertThrows(ApiException.class, () -> bookingService.abortBooking(
+                100, new swp391.carwash.dto.BookingAbortRequest("Máy hỏng"), principal));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals(BookingStatus.WASHING, booking.getStatus());
+    }
+
+    /** Check-in đơn của ngày khác làm đơn thoát khỏi tầm quét của BookingNoShowScheduler. */
+    @Test
+    void checkInRejectsBookingTooFarBeforeSlotStart() {
+        // Giờ hẹn còn cách 3 tiếng, cửa sổ check-in sớm chỉ 30 phút.
+        Booking booking = bookingWithSlotStartingAt(BookingStatus.CONFIRMED,
+                java.time.LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM).plusHours(3));
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+
+        ApiException exception = assertThrows(ApiException.class, () -> bookingService.checkIn(100, principal));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
+    }
+
+    /** No-show thủ công phải dùng đúng mốc của scheduler (giờ hẹn + grace). */
+    @Test
+    void markNoShowRejectsBeforeGraceDeadline() {
+        Booking booking = bookingWithSlotStartingAt(BookingStatus.CONFIRMED,
+                java.time.LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM).plusHours(1));
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+
+        ApiException exception = assertThrows(ApiException.class, () -> bookingService.markNoShow(100, principal));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
+    }
+
+    /** Khách không tới rồi bấm huỷ sau giờ hẹn = né NO_SHOW. Phải chặn. */
+    @Test
+    void cancelRejectsCustomerAfterSlotStart() {
+        Booking booking = bookingWithSlotStartingAt(BookingStatus.CONFIRMED,
+                java.time.LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM).minusMinutes(10));
+
+        when(principal.getId()).thenReturn(10);
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+
+        ApiException exception = assertThrows(ApiException.class, () -> bookingService.cancelBooking(100, principal));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertEquals(BookingStatus.CONFIRMED, booking.getStatus());
+    }
+
+    /** Staff vẫn huỷ được sau giờ hẹn để xử lý ngoại lệ tại quầy. */
+    @Test
+    void cancelAllowsGarageStaffAfterSlotStart() {
+        Booking booking = bookingWithSlotStartingAt(BookingStatus.CONFIRMED,
+                java.time.LocalDateTime.now(swp391.carwash.common.TimeZones.VIETNAM).minusMinutes(10));
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId(100)).thenReturn(Optional.empty());
+        when(invoiceRepository.findByBookingId(100)).thenReturn(Optional.empty());
+
+        bookingService.cancelBooking(100, principal);
+
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+    }
+
+    /**
+     * Trần đơn treo không bắt được kẻ phá kiên trì (đặt -> để trôi giờ -> đặt lại).
+     * Án tích vắng mặt mới là thứ chặn vòng lặp đó.
+     */
+    @Test
+    void createBookingBlockedAfterTooManyNoShows() {
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(principal.getId()).thenReturn(10);
+
+        AppUser customer = AppUser.builder().id(10).fullName("Customer").phone("0911111111").build();
+        Garage garage = Garage.builder()
+                .id(1).name("Garage").address("Address").phone("0900000000")
+                .status(swp391.carwash.enums.GarageStatus.ACTIVE)
+                .build();
+        BookingSlot slot = BookingSlot.builder()
+                .id(30).garage(garage).maxCapacity(4)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        ServicePackage service = ServicePackage.builder()
+                .id(40).garage(garage).name("Basic Wash")
+                .price(new BigDecimal("50000.00")).duration(30)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        Vehicle vehicle = Vehicle.builder()
+                .id(20).user(customer).licensePlate("59A1-12345")
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(customer));
+        when(garageRepository.findById(1)).thenReturn(Optional.of(garage));
+        when(bookingSlotRepository.findByIdForUpdate(30)).thenReturn(Optional.of(slot));
+        when(servicePackageRepository.findById(40)).thenReturn(Optional.of(service));
+        when(vehicleRepository.findById(20)).thenReturn(Optional.of(vehicle));
+        // Đã vắng mặt đúng ngưỡng 2 lần.
+        when(bookingRepository.countRecentNoShows(eq(10), any())).thenReturn(2L);
+
+        BookingCreateRequest request = new BookingCreateRequest(
+                1, 30, 40, 20, LocalDate.now().plusDays(1), null, PaymentMethod.CASH);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> bookingService.createBooking(request, principal));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatus());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    /**
+     * Lớp duy nhất KHÔNG tính theo tài khoản, nên là lớp duy nhất chống được kiểu tạo hàng
+     * loạt tài khoản rác. Slot capacity 4, tỉ lệ 0.5 -> tối đa 2 suất tiền mặt.
+     */
+    @Test
+    void createBookingRejectsCashWhenSlotCashQuotaIsFull() {
+        when(principal.getRoleNames()).thenReturn(List.of("CUSTOMER"));
+        when(principal.getId()).thenReturn(10);
+
+        AppUser customer = AppUser.builder().id(10).fullName("Customer").phone("0911111111").build();
+        Garage garage = Garage.builder()
+                .id(1).name("Garage").address("Address").phone("0900000000")
+                .status(swp391.carwash.enums.GarageStatus.ACTIVE)
+                .build();
+        BookingSlot slot = BookingSlot.builder()
+                .id(30).garage(garage).maxCapacity(4)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        ServicePackage service = ServicePackage.builder()
+                .id(40).garage(garage).name("Basic Wash")
+                .price(new BigDecimal("50000.00")).duration(30)
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+        Vehicle vehicle = Vehicle.builder()
+                .id(20).user(customer).licensePlate("59A1-12345")
+                .status(swp391.carwash.enums.RecordStatus.ACTIVE)
+                .build();
+
+        when(appUserRepository.findById(10)).thenReturn(Optional.of(customer));
+        when(garageRepository.findById(1)).thenReturn(Optional.of(garage));
+        when(bookingSlotRepository.findByIdForUpdate(30)).thenReturn(Optional.of(slot));
+        when(servicePackageRepository.findById(40)).thenReturn(Optional.of(service));
+        when(vehicleRepository.findById(20)).thenReturn(Optional.of(vehicle));
+        // 2 suất tiền mặt đã bị giữ -> đầy hạn ngạch CASH của slot.
+        when(bookingRepository.countUnpaidCashBookingsOnSlot(eq(30), eq(1), any(), any(), any()))
+                .thenReturn(2L);
+
+        BookingCreateRequest request = new BookingCreateRequest(
+                1, 30, 40, 20, LocalDate.now().plusDays(1), null, PaymentMethod.CASH);
+
+        ApiException exception = assertThrows(ApiException.class,
+                () -> bookingService.createBooking(request, principal));
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatus());
+        assertTrue(exception.getMessage().contains("thanh toán online"));
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    /** Án tích chặn thẳng việc đặt lịch nên bắt buộc phải có đường kêu oan. */
+    @Test
+    void excuseNoShowClearsStrikeByMovingBookingToCancelled() {
+        Booking booking = detailedBooking(BookingStatus.NO_SHOW);
+
+        when(principal.getRoleNames()).thenReturn(List.of("ADMIN"));
+        when(bookingRepository.findDetailedByIdForUpdate(100)).thenReturn(Optional.of(booking));
+        when(paymentRepository.findByBookingId(100)).thenReturn(Optional.empty());
+        when(invoiceRepository.findByBookingId(100)).thenReturn(Optional.empty());
+
+        bookingService.excuseNoShow(100,
+                new swp391.carwash.dto.BookingAbortRequest("Khách nhập viện, có giấy tờ"), principal);
+
+        // Không còn NO_SHOW -> rụng khỏi countRecentNoShows.
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        assertTrue(booking.getRejectionReason().contains("Khách nhập viện"));
+    }
+
+    private Booking bookingWithSlotStartingAt(BookingStatus status, java.time.LocalDateTime slotStart) {
+        Booking booking = detailedBooking(status);
+        booking.setBookingDate(slotStart.toLocalDate());
+        booking.getSlot().setStartTime(slotStart.toLocalTime());
+        booking.getSlot().setEndTime(slotStart.toLocalTime().plusMinutes(45));
+        return booking;
     }
 
     private Booking detailedBooking(BookingStatus status) {
