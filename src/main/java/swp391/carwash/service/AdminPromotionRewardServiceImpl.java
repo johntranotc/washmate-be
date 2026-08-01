@@ -353,12 +353,6 @@ public class AdminPromotionRewardServiceImpl
                         "Phần thưởng không tồn tại."
                 ));
 
-        if (reward.getStatus() == RewardStatus.DELETED) {
-            throw badRequest(
-                    "Không thể cập nhật phần thưởng đã xóa."
-            );
-        }
-
         return reward;
     }
 
